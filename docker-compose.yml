@@ -1,0 +1,40 @@
+# Hatcheck server mode: app + PostgreSQL.
+# Usage: cp .env.example .env, set POSTGRES_PASSWORD, then
+#   docker compose up --build
+# No credentials are hardcoded here; compose reads them from .env and fails
+# fast when POSTGRES_PASSWORD is missing (security invariant: env-only
+# secrets).
+
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      APP_URL: http://localhost:3000
+      HATCHECK_DB: postgres
+      DATABASE_URL: postgres://hatcheck:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/hatcheck
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: hatcheck
+      POSTGRES_DB: hatcheck
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hatcheck -d hatcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pgdata:

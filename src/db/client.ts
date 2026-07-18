@@ -3,7 +3,7 @@ import type { Store } from "./store";
 import { createPgStore } from "./store.pg";
 import { createSqliteStore } from "./store.sqlite";
 
-export function createStore(config: AppConfig): Store {
+export async function createStore(config: AppConfig): Promise<Store> {
   if (config.db.kind === "postgres") {
     if (!config.db.databaseUrl) {
       throw new Error("postgres mode requires DATABASE_URL");

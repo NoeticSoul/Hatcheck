@@ -26,3 +26,6 @@ test-results/
 Thumbs.db
 .idea/
 .vscode/
+
+# machine-local Claude Code settings (shared settings.json may be committed)
+.claude/settings.local.json

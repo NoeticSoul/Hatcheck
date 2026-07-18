@@ -3,6 +3,7 @@
 // always, and against PostgreSQL when HATCHECK_TEST_PG_URL is set.
 import postgres from "postgres";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { phase1ContractTests } from "./store.contract.phase1";
 import type { NewUser, Store } from "./store";
 import { createPgStore } from "./store.pg";
 import { createSqliteStore } from "./store.sqlite";
@@ -342,11 +343,14 @@ export function storeContractTests(
   });
 }
 
-storeContractTests("sqlite store contract", async () => {
+const makeSqliteTestStore = async (): Promise<Store> => {
   const store = await createSqliteStore(":memory:");
   await store.migrate();
   return store;
-});
+};
+
+storeContractTests("sqlite store contract", makeSqliteTestStore);
+phase1ContractTests("sqlite store phase 1 contract", makeSqliteTestStore);
 
 // Postgres leg of the contract runs only when a test database is provided,
 // e.g. HATCHECK_TEST_PG_URL=postgres://user:pass@localhost:5432/hatcheck_test
@@ -355,13 +359,13 @@ const pgUrl = process.env.HATCHECK_TEST_PG_URL;
 describe.runIf(pgUrl !== undefined && pgUrl !== "")(
   "postgres store (HATCHECK_TEST_PG_URL)",
   () => {
-    storeContractTests("postgres store contract", async () => {
+    const makePgTestStore = async (): Promise<Store> => {
       if (!pgUrl) throw new Error("HATCHECK_TEST_PG_URL is not set");
       // Test-harness cleanup only; the dual-DB portability rule applies to
       // core paths, not to resetting a scratch database between tests.
       const admin = postgres(pgUrl, { max: 1 });
       try {
-        await admin`DROP TABLE IF EXISTS users, sessions, audit_log, settings CASCADE`;
+        await admin`DROP TABLE IF EXISTS users, sessions, audit_log, settings, asset_interfaces, custody_events, import_rows, exception_records, assets, import_jobs, locations CASCADE`;
         // drizzle-orm/postgres-js records applied migrations in schema
         // "drizzle", table "__drizzle_migrations" (see pg-core/dialect.js).
         await admin`DROP SCHEMA IF EXISTS drizzle CASCADE`;
@@ -371,6 +375,9 @@ describe.runIf(pgUrl !== undefined && pgUrl !== "")(
       const store = createPgStore(pgUrl);
       await store.migrate();
       return store;
-    });
+    };
+
+    storeContractTests("postgres store contract", makePgTestStore);
+    phase1ContractTests("postgres store phase 1 contract", makePgTestStore);
   },
 );

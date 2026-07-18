@@ -7,12 +7,58 @@ If a request conflicts with the charter, say so before implementing.
 
 ## Current phase
 
-Gate 0 / Phase 0 — foundation built; Phase 0 technical gate criteria are
-met (CI green on both database engines incl. e2e, quickstart verified from
-a fresh clone). Gate 0 human items — employer IP clearance and the
-personal time/hardware confirmation — remain open with the maintainer and
-block Phase 1. Do not build ahead of the current phase's gate criteria.
-Update this line as phases close.
+Phase 1 — Assets & Locations. Phase 0 gate is CLOSED (foundation, auth,
+RBAC, audit log, dual-DB CI, Docker Compose all shipped). Do not build ahead
+of Phase 1 gate criteria. Update this section as phases close.
+
+### Phase 1 scope
+
+Asset CRUD, locations, user assignment, check-in/check-out with full
+history, CSV import, search, and audit views. Everything lands API-first:
+schema and migration -> endpoints with tests and OpenAPI -> UI.
+
+### Phase 1 gate criteria (work is not done until all pass)
+
+1. 500 synthetic assets imported via CSV in one run, with a per-row result
+   report.
+2. Every mutating action on assets, locations, and assignments appears in
+   the audit log with actor, timestamp, and before/after state.
+3. A check-out -> check-in round trip preserves complete custody history;
+   nothing is overwritten.
+4. CI green on both PostgreSQL and SQLite, including the import and
+   custody-history test suites.
+
+### Phase 1 domain rules
+
+- **Custody is an append-only event stream.** Check-out and check-in create
+  custody events; current holder is derived state, never a mutable field
+  that erases history. This is the product's core metaphor — the ticket
+  stub. Treat it with the same rigor as the audit log.
+- **Asset identity is multi-key.** Serial number, asset tag, system UUID,
+  and MAC address are distinct attributes; none is assumed globally unique
+  or universally present. MAC addresses are per-interface and can repeat
+  across records (docks); never use MAC as a primary matching key.
+- **CSV import never force-merges.** Rows that collide with existing assets
+  on identity fields become exception records for human review, per the
+  exception-first invariant. Import must be idempotent: re-running the same
+  file creates no duplicates.
+- **Import has a dry-run mode.** Preview with per-row validation results
+  before commit. Partial failures do not abort the whole import; failed
+  rows are reported with reasons.
+- **Locations are a hierarchy** (site -> building -> room), modeled so
+  homelab users can use a single flat level without ceremony.
+- **Lifecycle states, not hard deletes.** Assets move through states (e.g.,
+  in-stock, deployed, in-repair, retired). Retirement is a state change
+  plus audit entry; hard deletion is admin-only and still audit-logged.
+- **Search is server-side and paginated** from the start; no
+  load-everything-then-filter UI patterns, even at seed-data scale.
+
+### Explicitly NOT in Phase 1 (defer, even if adjacent)
+
+Connectors of any kind including AD/LDAP (Phase 4), imaging pipeline
+(Phase 3), Doc Studio and KB (Phase 2), reporting/export views beyond basic
+CSV of a filtered asset list, AI features, standalone binary builds
+(Phase 3). If a Phase 1 task seems to need one of these, stop and flag it.
 
 ## Stack (do not substitute without discussion)
 
@@ -37,9 +83,10 @@ Update this line as phases close.
 3. **API-first.** New functionality lands as a documented, tested REST
    endpoint before any UI is built on it. Keep the OpenAPI spec in sync in
    the same PR.
-4. **Exception-first correlation.** Connector sync never force-merges
-   conflicting device identities. Conflicts become exception records for
-   human review. This is an architectural invariant, not a preference.
+4. **Exception-first correlation.** Nothing force-merges conflicting device
+   identities — not imports, not future connectors. Conflicts become
+   exception records for human review. This is an architectural invariant,
+   not a preference.
 5. **Security invariants.** RBAC checks live at the API layer, never only in
    the UI. Every mutating action and every AI call writes an audit record.
    No secrets in code, config files, fixtures, or tests — environment

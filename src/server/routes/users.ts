@@ -1,6 +1,6 @@
 import { hash } from "@node-rs/argon2";
 import { createRoute } from "@hono/zod-openapi";
-import type { UserPatch } from "../../db/store";
+import type { UserPatch, UserRecord } from "../../db/store";
 import { clientIp, createRouter, errorBody, sanitizeUser } from "../context";
 import { requireAuth, requireRole } from "../middleware/auth";
 import {
@@ -15,6 +15,18 @@ import {
 } from "../openapi";
 
 const adminOnly = requireRole("admin");
+
+// Before/after state recorded in audit entries for user mutations. Only
+// non-sensitive fields: passwordHash never appears here, and a password
+// change is visible solely as the field name "password" in `fields`.
+function auditSnapshot(user: UserRecord) {
+  return {
+    email: user.email,
+    displayName: user.displayName,
+    role: user.role,
+    isActive: user.isActive,
+  };
+}
 
 const listUsersRoute = createRoute({
   method: "get",
@@ -107,7 +119,7 @@ export function userRoutes() {
       actorEmail: actor.email,
       entityType: "user",
       entityId: created.id,
-      details: { email: created.email, role: created.role },
+      details: { before: null, after: auditSnapshot(created) },
       ip: clientIp(c),
     });
     return c.json({ user: sanitizeUser(created) }, 201);
@@ -167,8 +179,13 @@ export function userRoutes() {
       actorEmail: actor.email,
       entityType: "user",
       entityId: updated.id,
-      // Field names only; never patch values (password would be in them).
-      details: { fields: Object.keys(body) },
+      // Patched field names plus sanitized before/after snapshots; raw
+      // patch values are never logged (password would be among them).
+      details: {
+        fields: Object.keys(body),
+        before: auditSnapshot(target),
+        after: auditSnapshot(updated),
+      },
       ip: clientIp(c),
     });
     return c.json({ user: sanitizeUser(updated) }, 200);

@@ -7,22 +7,22 @@ with an optional AI layer.
 > The name "Hatcheck" is provisional, pending trademark and domain checks
 > (see [CHARTER.md](CHARTER.md), Gate 0).
 
-> **Status: pre-alpha.** Phase 0 (foundation) is in progress: auth, RBAC,
-> audit log, dual-database support, and the CI/e2e scaffolding. No feature
-> modules exist yet. Scope, architecture, and roadmap live in
-> [CHARTER.md](CHARTER.md).
+> **Status: pre-alpha.** Phase 0 (foundation) is complete: auth, RBAC,
+> append-only audit log, dual-database support, and CI/e2e are shipped and
+> green on both engines. Phase 1 (Assets & Locations) is in progress.
+> Scope, architecture, and roadmap live in [CHARTER.md](CHARTER.md).
 
 ## Planned features
 
 | Module | Summary | Status |
 | --- | --- | --- |
-| Assets & Locations | Device/peripheral/license records, buildings/rooms, check-in/check-out, lifecycle states | Planned (Phase 1) |
+| Assets & Locations | Device/peripheral/license records, buildings/rooms, check-in/check-out, lifecycle states | In progress (Phase 1) |
 | Doc Studio | Guided SOP/KB authoring with enforced standards; export to Markdown/HTML/docx/PDF | Planned (Phase 2) |
 | Knowledge Base | Searchable library of rendered docs with review-date tracking | Planned (Phase 2) |
 | Imaging Pipeline | Per-device deployment state board with configurable stages and evidence | Planned (Phase 3) |
 | Connectors | Read-only collectors: CSV first, then AD/LDAP, SCCM, Jamf, Intune | Planned (Phase 4) |
 | Reporting & Exports | Saved views, CSV/XLSX export, scoped read-only API keys | Planned (Phase 4) |
-| Admin & Audit | RBAC, OIDC + local auth, append-only audit log | In progress (Phase 0) |
+| Admin & Audit | RBAC, OIDC + local auth, append-only audit log | Shipped (Phase 0) |
 
 ## Quickstart A -- Dev / standalone (SQLite)
 

@@ -142,3 +142,95 @@ describe("GET /api/v1/audit", () => {
     expect(body.error.code).toBe("validation_error");
   });
 });
+
+// Phase gate assertion: every mutating action writes an audit entry with
+// actor, timestamp, and before/after state -- and secret material never
+// enters the log.
+describe("audit record contents", () => {
+  it("user.update records actor, timestamp, and before/after state", async () => {
+    const { app, store } = await makeApp();
+    const admin = await seedUser(store, "admin@hatcheck.test", "admin");
+    const target = await seedUser(store, "tech@hatcheck.test", "technician");
+    const cookie = await loginAs(app, "admin@hatcheck.test");
+    const t0 = Date.now();
+
+    const res = await app.request(`/api/v1/users/${target.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ role: "readonly" }),
+    });
+    expect(res.status).toBe(200);
+
+    const [entry] = await store.listAudit({ limit: 1, action: "user.update" });
+    if (entry === undefined) throw new Error("no user.update audit entry");
+    expect(entry.actorUserId).toBe(admin.id);
+    expect(entry.actorEmail).toBe("admin@hatcheck.test");
+    expect(entry.at).toBeGreaterThanOrEqual(t0);
+    expect(entry.at).toBeLessThanOrEqual(Date.now());
+    expect(entry.entityType).toBe("user");
+    expect(entry.entityId).toBe(target.id);
+    const details = JSON.parse(entry.details ?? "null");
+    expect(details.fields).toContain("role");
+    expect(details.before.role).toBe("technician");
+    expect(details.after.role).toBe("readonly");
+    expect(details.before.email).toBe("tech@hatcheck.test");
+  });
+
+  it("user.create records actor, timestamp, and the created state", async () => {
+    const { app, store } = await makeApp();
+    const admin = await seedUser(store, "admin@hatcheck.test", "admin");
+    const cookie = await loginAs(app, "admin@hatcheck.test");
+    const t0 = Date.now();
+
+    const res = await app.request("/api/v1/users", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({
+        email: "newhire@hatcheck.test",
+        displayName: "Robin Newhire",
+        role: "technician",
+        password: "a-long-enough-password",
+      }),
+    });
+    expect(res.status).toBe(201);
+
+    const [entry] = await store.listAudit({ limit: 1, action: "user.create" });
+    if (entry === undefined) throw new Error("no user.create audit entry");
+    expect(entry.actorUserId).toBe(admin.id);
+    expect(entry.actorEmail).toBe("admin@hatcheck.test");
+    expect(entry.at).toBeGreaterThanOrEqual(t0);
+    expect(entry.at).toBeLessThanOrEqual(Date.now());
+    const details = JSON.parse(entry.details ?? "null");
+    expect(details.before).toBeNull();
+    expect(details.after.email).toBe("newhire@hatcheck.test");
+    expect(details.after.role).toBe("technician");
+  });
+
+  it("password changes never put secret material in the audit log", async () => {
+    const { app, store } = await makeApp();
+    await seedUser(store, "admin@hatcheck.test", "admin");
+    const target = await seedUser(store, "tech@hatcheck.test", "technician");
+    const cookie = await loginAs(app, "admin@hatcheck.test");
+
+    const newPassword = "brand-new-secret-value-1";
+    const res = await app.request(`/api/v1/users/${target.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({ password: newPassword }),
+    });
+    expect(res.status).toBe(200);
+
+    const [entry] = await store.listAudit({ limit: 1, action: "user.update" });
+    if (entry === undefined) throw new Error("no user.update audit entry");
+    // The change is visible by field name only.
+    const details = JSON.parse(entry.details ?? "null");
+    expect(details.fields).toContain("password");
+    expect(details.before).not.toHaveProperty("password");
+    expect(details.before).not.toHaveProperty("passwordHash");
+    expect(details.after).not.toHaveProperty("password");
+    expect(details.after).not.toHaveProperty("passwordHash");
+    // Neither the plaintext nor an argon2 hash appears anywhere in the row.
+    expect(entry.details).not.toContain(newPassword);
+    expect(entry.details).not.toContain("$argon2");
+  });
+});

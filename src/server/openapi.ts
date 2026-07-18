@@ -80,6 +80,69 @@ export const AuditListResponseSchema = z.object({
   total: z.number(),
 });
 
+// ---- Phase 1: Locations ---------------------------------------------------
+
+export const LocationKindSchema = z
+  .enum(["site", "building", "room"])
+  .openapi("LocationKind");
+
+export const LocationSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    kind: LocationKindSchema,
+    parentId: z.string().nullable(),
+    description: z.string().nullable(),
+    isActive: z.boolean(),
+    createdAt: z.number(),
+    updatedAt: z.number(),
+  })
+  .openapi("Location");
+
+export const LocationResponseSchema = z.object({ location: LocationSchema });
+
+export const LocationListResponseSchema = z.object({
+  items: z.array(LocationSchema),
+  total: z.number(),
+  limit: z.number(),
+  offset: z.number(),
+});
+
+export const LocationIdParamsSchema = z.object({
+  id: z.string().min(1),
+});
+
+/** Query-string booleans: only the exact strings "true"/"false" parse. */
+const queryBoolSchema = z
+  .enum(["true", "false"])
+  .transform((v) => v === "true");
+
+export const ListLocationsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+  parentId: z.uuid().optional(),
+  rootsOnly: queryBoolSchema.optional(),
+  kind: LocationKindSchema.optional(),
+  q: z.string().min(1).optional(),
+  includeInactive: queryBoolSchema.optional(),
+});
+
+export const CreateLocationBodySchema = z.object({
+  name: z.string().min(1).max(200),
+  kind: LocationKindSchema.optional(),
+  parentId: z.uuid().nullable().optional(),
+  description: z.string().max(2000).nullable().optional(),
+  isActive: z.boolean().optional(),
+});
+
+export const PatchLocationBodySchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  kind: LocationKindSchema.optional(),
+  parentId: z.uuid().nullable().optional(),
+  description: z.string().max(2000).nullable().optional(),
+  isActive: z.boolean().optional(),
+});
+
 export const HealthResponseSchema = z.object({
   status: z.literal("ok"),
   version: z.string(),

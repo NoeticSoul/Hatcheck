@@ -98,14 +98,21 @@ export function phase1ContractTests(
         ).rejects.toThrow();
       });
 
-      it("allows two root locations with the same name (NULL-distinct)", async () => {
-        // Pins cross-engine semantics: both engines treat NULLs as distinct
-        // in the (parent_id, name) unique index, so root-level uniqueness
-        // is a service-layer rule, not a database one.
-        const first = await store.createLocation({ name: "Annex" });
-        const second = await store.createLocation({ name: "Annex" });
-        expect(second.id).not.toBe(first.id);
-        expect(await store.countLocations({ parentId: null })).toBe(2);
+      it("rejects two root locations with the same name (partial-index backstop)", async () => {
+        // NULLs are distinct in the (parent_id, name) unique index on both
+        // engines, so a dedicated partial unique index on name WHERE
+        // parent_id IS NULL backs up the service-layer pre-check; without
+        // it a check-then-insert race could persist duplicate roots.
+        await store.createLocation({ name: "Annex" });
+        await expect(store.createLocation({ name: "Annex" })).rejects.toThrow();
+        expect(await store.countLocations({ parentId: null })).toBe(1);
+        // Same name under a parent remains fine.
+        const site = await store.createLocation({ name: "Campus", kind: "site" });
+        const nested = await store.createLocation({
+          name: "Annex",
+          parentId: site.id,
+        });
+        expect(nested.parentId).toBe(site.id);
       });
 
       it("filters by parentId: undefined, null, and a concrete value", async () => {

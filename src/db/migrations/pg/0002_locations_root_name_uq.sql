@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "locations_root_name_uq" ON "locations" USING btree ("name") WHERE parent_id IS NULL;

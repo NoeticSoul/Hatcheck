@@ -1,6 +1,7 @@
 // SQLite schema. Must stay logically identical to schema.pg.ts — same
 // tables, columns, and semantics. Timestamps are epoch milliseconds
 // (integer) on both engines so query logic never branches by dialect.
+import { sql } from "drizzle-orm";
 import {
   index,
   integer,
@@ -99,6 +100,13 @@ export const locations = sqliteTable(
   (t) => [
     index("locations_parent_id_idx").on(t.parentId),
     uniqueIndex("locations_parent_name_uq").on(t.parentId, t.name),
+    // NULL parents are distinct in unique indexes on both engines, so the
+    // sibling index above cannot police root-level names; this partial
+    // index (portable: SQLite and PG both support them) is the backstop
+    // behind the service-layer pre-check.
+    uniqueIndex("locations_root_name_uq")
+      .on(t.name)
+      .where(sql`parent_id IS NULL`),
   ],
 );
 

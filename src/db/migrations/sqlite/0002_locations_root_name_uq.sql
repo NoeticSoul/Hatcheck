@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `locations_root_name_uq` ON `locations` (`name`) WHERE parent_id IS NULL;

@@ -10,6 +10,7 @@ import { aiRoutes } from "./routes/ai";
 import { auditRoutes } from "./routes/audit";
 import { authRoutes } from "./routes/auth";
 import { healthRoutes } from "./routes/health";
+import { locationRoutes } from "./routes/locations";
 import { userRoutes } from "./routes/users";
 
 export function createApp(store: Store, config: AppConfig) {
@@ -41,6 +42,7 @@ export function createApp(store: Store, config: AppConfig) {
   app.route("/", healthRoutes());
   app.route("/", authRoutes(config));
   app.route("/", userRoutes());
+  app.route("/", locationRoutes());
   app.route("/", auditRoutes());
   app.route("/", aiRoutes());
 

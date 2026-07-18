@@ -2,6 +2,7 @@
 // same tables, columns, and semantics. Timestamps are epoch milliseconds
 // (bigint read as number) on both engines. Roles use plain text columns,
 // not pgEnum, to keep the schema portable (CLAUDE.md hard rule 1).
+import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
@@ -99,6 +100,13 @@ export const locations = pgTable(
   (t) => [
     index("locations_parent_id_idx").on(t.parentId),
     uniqueIndex("locations_parent_name_uq").on(t.parentId, t.name),
+    // NULL parents are distinct in unique indexes on both engines, so the
+    // sibling index above cannot police root-level names; this partial
+    // index (portable: SQLite and PG both support them) is the backstop
+    // behind the service-layer pre-check.
+    uniqueIndex("locations_root_name_uq")
+      .on(t.name)
+      .where(sql`parent_id IS NULL`),
   ],
 );
 

@@ -25,6 +25,7 @@ export default defineConfig({
     // Playwright merges this over process.env for the spawned command.
     env: { PORT: String(PORT) },
     stdout: "pipe",
-    timeout: 60_000,
+    // Covers the vite build that serve.ts now runs before starting.
+    timeout: 120_000,
   },
 });

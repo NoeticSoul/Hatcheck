@@ -79,7 +79,15 @@ export function createPgStore(databaseUrl: string): Store {
     },
 
     async listUsers(): Promise<UserRecord[]> {
-      return db.select().from(schema.users).orderBy(asc(schema.users.email));
+      const rows = await db
+        .select()
+        .from(schema.users)
+        .orderBy(asc(schema.users.email));
+      // Normalize in JS: SQLite orders by bytes, PostgreSQL by locale
+      // collation; both stores re-sort so the engines agree exactly.
+      return rows.sort((a, b) =>
+        a.email < b.email ? -1 : a.email > b.email ? 1 : 0,
+      );
     },
 
     async updateUser(id: string, patch: UserPatch): Promise<UserRecord | null> {

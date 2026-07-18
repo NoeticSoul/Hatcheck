@@ -1,4 +1,4 @@
-import { verify } from "@node-rs/argon2";
+import { hash, verify } from "@node-rs/argon2";
 import { createRoute } from "@hono/zod-openapi";
 import type { AppConfig } from "../../config";
 import { clientIp, createRouter, errorBody, sanitizeUser } from "../context";
@@ -84,6 +84,12 @@ const oidcCallbackRoute = createRoute({
 
 const INVALID_CREDENTIALS = "Invalid email or password";
 
+// Verified against when the account is unknown or unusable, so those paths
+// cost the same argon2 work as a wrong password and login timing does not
+// reveal whether an email exists. The plaintext is irrelevant; it only has
+// to be a well-formed hash that never matches.
+const timingEqualizerHash = hash("hatcheck-timing-equalizer");
+
 export function authRoutes(config: AppConfig) {
   const router = createRouter();
   const oidcHandlers = createOidcHandlers(config);
@@ -108,6 +114,8 @@ export function authRoutes(config: AppConfig) {
       user.passwordHash !== null
     ) {
       verified = await verify(user.passwordHash, password);
+    } else {
+      await verify(await timingEqualizerHash, password);
     }
 
     // Same 401 for unknown email, wrong password, and unusable accounts.

@@ -49,6 +49,15 @@ jobs:
           HATCHECK_TEST_PG_URL: postgres://postgres:postgres@localhost:5432/postgres
       - name: Build web bundle
         run: bun run build
+      # E2E runs on one leg only; it exercises sqlite standalone mode.
+      # serve.ts rebuilds the bundle itself, so ordering after the build
+      # step is belt-and-braces, not a dependency.
+      - name: Install Playwright browsers
+        if: matrix.db == 'sqlite'
+        run: bunx playwright install --with-deps chromium
+      - name: E2E (playwright)
+        if: matrix.db == 'sqlite'
+        run: bun run e2e
 
   audit:
     runs-on: ubuntu-latest

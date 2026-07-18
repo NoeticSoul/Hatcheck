@@ -66,6 +66,7 @@ the annotated template. No secrets in files or the database, ever.
 | `DATABASE_URL` | -- | PostgreSQL connection string (required for `postgres`) |
 | `HATCHECK_SQLITE_PATH` | `./data/hatcheck.db` | SQLite file location |
 | `SESSION_TTL_HOURS` | `12` | Session lifetime |
+| `HATCHECK_TRUST_PROXY` | `false` | Trust `X-Forwarded-For` (only behind a reverse proxy) |
 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | unset | OIDC SSO; set all three or none |
 | `OIDC_REDIRECT_URI` | `$APP_URL/api/v1/auth/oidc/callback` | OIDC callback override |
 | `HATCHECK_AI_PROVIDER` | unset | `anthropic` / `openai` / `ollama`; unset = AI off |

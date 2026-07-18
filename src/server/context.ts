@@ -19,7 +19,12 @@ export interface AppVariables {
   session: SessionRecord;
 }
 
-export type AppEnv = { Variables: AppVariables };
+export type AppEnv = {
+  Variables: AppVariables;
+  // Populated by the runtime entrypoint (index.ts passes the socket address
+  // through app.fetch's env argument); absent in tests via app.request.
+  Bindings: { remoteAddr?: string };
+};
 
 export interface ErrorBody {
   error: { code: string; message: string };
@@ -52,11 +57,24 @@ export function sanitizeUser(user: UserRecord): SafeUser {
   };
 }
 
-/** First x-forwarded-for hop when present, else "local" (direct/test). */
+/**
+ * Client IP for rate limiting and audit records. X-Forwarded-For is
+ * client-controlled, so it is honored only when HATCHECK_TRUST_PROXY is set
+ * (i.e. a trusted reverse proxy fronts the server) — and then only its LAST
+ * hop, which is the one appended by that proxy; earlier hops are whatever
+ * the client sent. Otherwise the socket address from the runtime is used.
+ */
 export function clientIp(c: Context<AppEnv>): string {
-  const forwarded = c.req.header("x-forwarded-for");
-  const first = forwarded?.split(",")[0]?.trim();
-  return first !== undefined && first !== "" ? first : "local";
+  if (c.get("config").trustProxy) {
+    const forwarded = c.req.header("x-forwarded-for");
+    const hops = forwarded
+      ?.split(",")
+      .map((h) => h.trim())
+      .filter((h) => h !== "");
+    const last = hops?.[hops.length - 1];
+    if (last !== undefined) return last;
+  }
+  return c.env?.remoteAddr ?? "local";
 }
 
 /** New router with the standard zod validation hook (400, error shape). */

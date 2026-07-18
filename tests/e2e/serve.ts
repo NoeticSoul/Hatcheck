@@ -33,6 +33,13 @@ function run(command: string): Promise<number> {
 }
 
 async function main(): Promise<void> {
+  // Always test the current frontend: dist/web is gitignored and may be
+  // missing (fresh clone) or stale (edited src/web) without this build.
+  const buildCode = await run("bun run build");
+  if (buildCode !== 0) {
+    process.stderr.write(`[e2e] build failed with exit code ${buildCode}\n`);
+    process.exit(buildCode);
+  }
   const seedCode = await run("bun src/db/seed.ts");
   if (seedCode !== 0) {
     process.stderr.write(`[e2e] seed failed with exit code ${seedCode}\n`);

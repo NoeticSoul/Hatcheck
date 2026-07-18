@@ -8,10 +8,17 @@ import { createApp } from "./app";
 
 // bun-types is not installed (tsconfig types: node), so declare the minimal
 // Bun surface this file uses.
+interface BunServer {
+  requestIP(request: Request): { address: string } | null;
+}
+
 declare const Bun: {
   serve(options: {
     port: number;
-    fetch: (request: Request) => Response | Promise<Response>;
+    fetch: (
+      request: Request,
+      server: BunServer,
+    ) => Response | Promise<Response>;
   }): { port: number };
 };
 
@@ -40,7 +47,14 @@ setInterval(() => {
   });
 }, SESSION_SWEEP_INTERVAL_MS);
 
-Bun.serve({ port: config.port, fetch: app.fetch });
+Bun.serve({
+  port: config.port,
+  // The socket address rides in on the Hono env so clientIp() has a value
+  // the client cannot forge (X-Forwarded-For is only trusted behind a
+  // proxy; see clientIp in context.ts).
+  fetch: (request, server) =>
+    app.fetch(request, { remoteAddr: server.requestIP(request)?.address }),
+});
 
 console.log(
   `Hatcheck API (${config.db.kind}) listening on http://localhost:${config.port}`,

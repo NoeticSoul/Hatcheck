@@ -72,6 +72,7 @@ const patchUserRoute = createRoute({
     401: jsonContent(ErrorSchema, "Not authenticated"),
     403: jsonContent(ErrorSchema, "Admin role required"),
     404: jsonContent(ErrorSchema, "User not found"),
+    409: jsonContent(ErrorSchema, "Would remove the last active admin"),
   },
 });
 
@@ -118,6 +119,30 @@ export function userRoutes() {
     const store = c.get("store");
     const actor = c.get("user");
 
+    const target = await store.getUserById(id);
+    if (target === null) {
+      return c.json(errorBody("not_found", "User not found"), 404);
+    }
+
+    // An instance must always retain at least one active admin, or it can
+    // never be administered again (there is no out-of-band role recovery).
+    const demotes =
+      body.isActive === false ||
+      (body.role !== undefined && body.role !== "admin");
+    if (demotes && target.role === "admin" && target.isActive) {
+      const users = await store.listUsers();
+      const activeAdmins = users.filter((u) => u.role === "admin" && u.isActive);
+      if (activeAdmins.length <= 1) {
+        return c.json(
+          errorBody(
+            "last_admin",
+            "Cannot deactivate or demote the last active admin",
+          ),
+          409,
+        );
+      }
+    }
+
     const patch: UserPatch = {};
     if (body.displayName !== undefined) patch.displayName = body.displayName;
     if (body.role !== undefined) patch.role = body.role;
@@ -130,7 +155,10 @@ export function userRoutes() {
     if (updated === null) {
       return c.json(errorBody("not_found", "User not found"), 404);
     }
-    if (body.isActive === false) {
+    // Deactivation and password reset both invalidate existing sessions;
+    // a stolen cookie must not survive a credential rotation (CWE-613).
+    // Admins resetting their own password sign themselves out too.
+    if (body.isActive === false || body.password !== undefined) {
       await store.deleteSessionsForUser(id);
     }
     await store.appendAudit({

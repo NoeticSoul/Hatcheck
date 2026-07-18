@@ -14,6 +14,10 @@ const EnvSchema = z.object({
 
   SESSION_TTL_HOURS: z.coerce.number().positive().default(12),
 
+  // Off by default: X-Forwarded-For is client-controlled unless a trusted
+  // reverse proxy in front of Hatcheck sets it. Only enable behind one.
+  HATCHECK_TRUST_PROXY: z.enum(["true", "false"]).default("false"),
+
   OIDC_ISSUER: z.string().url().optional(),
   OIDC_CLIENT_ID: z.string().min(1).optional(),
   OIDC_CLIENT_SECRET: z.string().min(1).optional(),
@@ -33,6 +37,7 @@ export interface AppConfig {
   appUrl: string;
   db: { kind: DbKind; databaseUrl: string | null; sqlitePath: string };
   sessionTtlMs: number;
+  trustProxy: boolean;
   oidc: {
     enabled: boolean;
     issuer: string | null;
@@ -82,6 +87,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       sqlitePath: e.HATCHECK_SQLITE_PATH,
     },
     sessionTtlMs: e.SESSION_TTL_HOURS * 60 * 60 * 1000,
+    trustProxy: e.HATCHECK_TRUST_PROXY === "true",
     oidc: {
       enabled: oidcConfigured,
       issuer: e.OIDC_ISSUER ?? null,

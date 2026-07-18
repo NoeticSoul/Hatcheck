@@ -54,7 +54,11 @@
       "PowerShell(curl.exe -s -H \"Cookie: hatcheck_session=yQ4f_9lI0OKLUzguS00ZNUMjfEIfRtt-TbWIqsiYerc\" \"http://localhost:3200/api/v1/audit?limit=5\")",
       "PowerShell(\"\")",
       "PowerShell(Remove-Item C:\\\\Users\\\\damie\\\\Desktop\\\\Asset\\\\debug-session.tmp.ts -Confirm:$false)",
-      "PowerShell($env:Path = \"C:\\\\Users\\\\TEMP.DAMIEN.001\\\\AppData\\\\Roaming\\\\npm;$env:Path\"; bunx playwright test --reporter=line)"
+      "PowerShell($env:Path = \"C:\\\\Users\\\\TEMP.DAMIEN.001\\\\AppData\\\\Roaming\\\\npm;$env:Path\"; bunx playwright test --reporter=line)",
+      "PowerShell($env:Path = \"C:\\\\Users\\\\TEMP.DAMIEN.001\\\\AppData\\\\Roaming\\\\npm;$env:Path\"; cd C:\\\\Users\\\\damie\\\\Desktop\\\\Asset; bun \"C:\\\\Users\\\\TEMPDA~1.001\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-damie-Desktop-Asset\\\\3b48564f-f2eb-4bd7-abb6-a783b2369b87\\\\scratchpad\\\\spec-check.ts\")",
+      "PowerShell($env:Path = \"C:\\\\Users\\\\TEMP.DAMIEN.001\\\\AppData\\\\Roaming\\\\npm;$env:Path\"; Set-Location C:\\\\Users\\\\damie\\\\Desktop\\\\Asset; bun -e \"import { hash } from '@node-rs/argon2'; console.log\\(await hash\\('probe-password'\\)\\);\")",
+      "Bash(grep -v '\"\\\\./\\\\|\"\\\\.\\\\./')",
+      "PowerShell($ok = $false; foreach \\($i in 1..20\\) { try { Invoke-RestMethod -Uri \"http://localhost:3200/api/v1/health\" -TimeoutSec 2 | Out-Null; $ok = $true; break } catch { Start-Sleep -Milliseconds 500 } }; if \\(-not $ok\\) { throw \"server not up\" }; $login = curl.exe -s -i -X POST -H \"Content-Type: application/json\" -H \"X-Forwarded-For: 203.0.113.99\" -d '{\\\\\"email\\\\\":\\\\\"admin@hatcheck.test\\\\\",\\\\\"password\\\\\":\\\\\"smoke-test-admin-pw-01\\\\\"}' http://localhost:3200/api/v1/auth/login; $cookie = \\(\\($login -split \"`n\" | Where-Object { $_ -match \"^set-cookie:\" }\\) -replace \"set-cookie: \", \"\" -split \";\"\\)[0]; curl.exe -s -H \"Cookie: $cookie\" \"http://localhost:3200/api/v1/audit?limit=1&action=auth.login\")"
     ]
   }
 }

@@ -1,6 +1,7 @@
 // createApp assembles the API. Runtime-neutral: no Bun-specific imports
 // here (they are confined to index.ts).
 import { swaggerUI } from "@hono/swagger-ui";
+import { bodyLimit } from "hono/body-limit";
 import pkg from "../../package.json";
 import type { AppConfig } from "../config";
 import type { Store } from "../db/store";
@@ -19,6 +20,16 @@ export function createApp(store: Store, config: AppConfig) {
     c.set("config", config);
     await next();
   });
+
+  // The API is JSON-only; nothing legitimate approaches this size.
+  app.use(
+    "/api/*",
+    bodyLimit({
+      maxSize: 256 * 1024,
+      onError: (c) =>
+        c.json(errorBody("payload_too_large", "Request body too large"), 413),
+    }),
+  );
 
   app.onError((err, c) => {
     console.error("Unhandled error:", err);

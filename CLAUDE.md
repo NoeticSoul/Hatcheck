@@ -7,8 +7,12 @@ If a request conflicts with the charter, say so before implementing.
 
 ## Current phase
 
-Gate 0 / Phase 0 — foundation. Do not build ahead of the current phase's
-gate criteria. Update this line as phases close.
+Gate 0 / Phase 0 — foundation built; Phase 0 technical gate criteria are
+met (CI green on both database engines incl. e2e, quickstart verified from
+a fresh clone). Gate 0 human items — employer IP clearance and the
+personal time/hardware confirmation — remain open with the maintainer and
+block Phase 1. Do not build ahead of the current phase's gate criteria.
+Update this line as phases close.
 
 ## Stack (do not substitute without discussion)
 

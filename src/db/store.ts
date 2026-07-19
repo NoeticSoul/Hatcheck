@@ -406,7 +406,17 @@ export interface Store {
   ): Promise<AssetRecord | null>;
   listAssets(query: AssetQuery): Promise<AssetRecord[]>;
   countAssets(query: Omit<AssetQuery, "limit" | "offset">): Promise<number>;
-  updateAsset(id: string, patch: AssetPatch): Promise<AssetRecord | null>;
+  /**
+   * When guard.statusNot is given the UPDATE itself carries
+   * `status <> guard.statusNot`, closing the read-then-write window where
+   * a concurrent check-out could be overwritten. A null return then means
+   * "not found OR guard failed" — callers re-read to distinguish.
+   */
+  updateAsset(
+    id: string,
+    patch: AssetPatch,
+    guard?: { statusNot: AssetStatus },
+  ): Promise<AssetRecord | null>;
   /** Hard delete; interfaces and custody events cascade. */
   deleteAsset(id: string): Promise<boolean>;
 

@@ -9,6 +9,7 @@ import {
   inArray,
   isNull,
   lt,
+  ne,
   or,
   sql,
   type Column,
@@ -576,11 +577,19 @@ export function createPgStore(databaseUrl: string): Store {
     async updateAsset(
       id: string,
       patch: AssetPatch,
+      guard?: { statusNot: AssetStatus },
     ): Promise<AssetRecord | null> {
       const rows = await db
         .update(schema.assets)
         .set({ ...patch, updatedAt: Date.now() })
-        .where(eq(schema.assets.id, id))
+        .where(
+          guard === undefined
+            ? eq(schema.assets.id, id)
+            : and(
+                eq(schema.assets.id, id),
+                ne(schema.assets.status, guard.statusNot),
+              ),
+        )
         .returning();
       return rows[0] ?? null;
     },

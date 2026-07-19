@@ -602,6 +602,41 @@ export function phase1ContractTests(
         ).toBeNull();
       });
 
+      it("updateAsset statusNot guard blocks the write when the status matches", async () => {
+        // The guard closes the read-then-write race: a PATCH prepared
+        // against an in_stock asset must not land after a concurrent
+        // check-out has set the status to deployed.
+        const asset = await store.createAssetWithInterfaces(
+          makeAsset({ name: "Guarded Laptop" }),
+          [],
+        );
+        const out = await store.appendCustodyEvent(
+          { assetId: asset.id, type: "check_out", holderName: "Kai Holder" },
+          "deployed",
+        );
+        expect(out !== null && out.ok).toBe(true);
+
+        const blocked = await store.updateAsset(
+          asset.id,
+          { status: "retired" },
+          { statusNot: "deployed" },
+        );
+        expect(blocked).toBeNull();
+        expect((await store.getAssetById(asset.id))?.status).toBe("deployed");
+
+        // Guard passes once the status no longer matches.
+        await store.appendCustodyEvent(
+          { assetId: asset.id, type: "check_in" },
+          "in_stock",
+        );
+        const allowed = await store.updateAsset(
+          asset.id,
+          { status: "retired" },
+          { statusNot: "deployed" },
+        );
+        expect(allowed?.status).toBe("retired");
+      });
+
       it("clearing an identity key frees the value for another asset", async () => {
         const first = await store.createAssetWithInterfaces(
           makeAsset({

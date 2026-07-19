@@ -45,7 +45,7 @@ export interface LocationFailure<S extends number> {
   message: string;
 }
 
-function fail<S extends number>(
+export function fail<S extends number>(
   status: S,
   code: string,
   message: string,
@@ -62,7 +62,7 @@ function fail<S extends number>(
  * is just "Failed query: ..." with the real PG text on err.cause, so both
  * predicates walk the cause chain (SQLite errors arrive unwrapped).
  */
-function errorMessages(err: unknown): string {
+export function errorMessages(err: unknown): string {
   const parts: string[] = [];
   let current: unknown = err;
   for (let depth = 0; depth < 5 && current !== undefined && current !== null; depth += 1) {
@@ -72,7 +72,7 @@ function errorMessages(err: unknown): string {
   return parts.join("\n");
 }
 
-function isUniqueViolation(err: unknown): boolean {
+export function isUniqueViolation(err: unknown): boolean {
   return /unique constraint|duplicate key/i.test(errorMessages(err));
 }
 

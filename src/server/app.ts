@@ -7,6 +7,7 @@ import type { AppConfig } from "../config";
 import type { Store } from "../db/store";
 import { createRouter, errorBody } from "./context";
 import { aiRoutes } from "./routes/ai";
+import { assetRoutes } from "./routes/assets";
 import { auditRoutes } from "./routes/audit";
 import { authRoutes } from "./routes/auth";
 import { healthRoutes } from "./routes/health";
@@ -43,6 +44,7 @@ export function createApp(store: Store, config: AppConfig) {
   app.route("/", authRoutes(config));
   app.route("/", userRoutes());
   app.route("/", locationRoutes());
+  app.route("/", assetRoutes());
   app.route("/", auditRoutes());
   app.route("/", aiRoutes());
 

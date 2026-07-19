@@ -12,6 +12,7 @@ import {
   inArray,
   isNull,
   lt,
+  ne,
   or,
   sql,
   type Column,
@@ -596,11 +597,19 @@ export function buildSqliteStore<TRun>(
     async updateAsset(
       id: string,
       patch: AssetPatch,
+      guard?: { statusNot: AssetStatus },
     ): Promise<AssetRecord | null> {
       const rows = db
         .update(schema.assets)
         .set({ ...patch, updatedAt: Date.now() })
-        .where(eq(schema.assets.id, id))
+        .where(
+          guard === undefined
+            ? eq(schema.assets.id, id)
+            : and(
+                eq(schema.assets.id, id),
+                ne(schema.assets.status, guard.statusNot),
+              ),
+        )
         .returning()
         .all();
       return rows[0] ?? null;

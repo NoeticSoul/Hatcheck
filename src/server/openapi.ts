@@ -143,6 +143,144 @@ export const PatchLocationBodySchema = z.object({
   isActive: z.boolean().optional(),
 });
 
+// ---- Phase 1: Assets ------------------------------------------------------
+
+export const AssetTypeSchema = z
+  .enum(["device", "peripheral", "license"])
+  .openapi("AssetType");
+
+export const AssetStatusSchema = z
+  .enum(["in_stock", "deployed", "in_repair", "retired"])
+  .openapi("AssetStatus");
+
+export const AssetSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    assetType: AssetTypeSchema,
+    status: AssetStatusSchema,
+    locationId: z.string().nullable(),
+    model: z.string().nullable(),
+    manufacturer: z.string().nullable(),
+    notes: z.string().nullable(),
+    assetTag: z.string().nullable(),
+    assetTagNorm: z.string().nullable(),
+    serialNumber: z.string().nullable(),
+    serialNumberNorm: z.string().nullable(),
+    systemUuid: z.string().nullable(),
+    systemUuidNorm: z.string().nullable(),
+    createdAt: z.number(),
+    updatedAt: z.number(),
+  })
+  .openapi("Asset");
+
+export const AssetInterfaceSchema = z
+  .object({
+    id: z.string(),
+    assetId: z.string(),
+    mac: z.string(),
+    label: z.string().nullable(),
+    createdAt: z.number(),
+  })
+  .openapi("AssetInterface");
+
+export const CustodyEventSchema = z
+  .object({
+    id: z.string(),
+    assetId: z.string(),
+    at: z.number(),
+    type: z.enum(["check_out", "check_in"]),
+    holderUserId: z.string().nullable(),
+    holderName: z.string().nullable(),
+    locationId: z.string().nullable(),
+    locationName: z.string().nullable(),
+    note: z.string().nullable(),
+    actorUserId: z.string().nullable(),
+    actorEmail: z.string().nullable(),
+  })
+  .openapi("CustodyEvent");
+
+export const AssetListItemSchema = AssetSchema.extend({
+  currentCustody: CustodyEventSchema.nullable(),
+}).openapi("AssetListItem");
+
+export const AssetListResponseSchema = z.object({
+  items: z.array(AssetListItemSchema),
+  total: z.number(),
+  limit: z.number(),
+  offset: z.number(),
+});
+
+export const AssetResponseSchema = z.object({ asset: AssetSchema });
+
+export const AssetCreateResponseSchema = z.object({
+  asset: AssetSchema,
+  interfaces: z.array(AssetInterfaceSchema),
+});
+
+export const AssetDetailResponseSchema = z.object({
+  asset: AssetSchema,
+  interfaces: z.array(AssetInterfaceSchema),
+  currentCustody: CustodyEventSchema.nullable(),
+  location: LocationSchema.nullable(),
+});
+
+export const AssetInterfaceResponseSchema = z.object({
+  interface: AssetInterfaceSchema,
+});
+
+export const AssetIdParamsSchema = z.object({
+  id: z.string().min(1),
+});
+
+export const AssetInterfaceParamsSchema = z.object({
+  id: z.string().min(1),
+  interfaceId: z.string().min(1),
+});
+
+export const ListAssetsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+  status: AssetStatusSchema.optional(),
+  assetType: AssetTypeSchema.optional(),
+  locationId: z.uuid().optional(),
+  q: z.string().min(1).optional(),
+});
+
+export const AssetInterfaceInputSchema = z.object({
+  mac: z.string().min(1),
+  label: z.string().max(100).nullable().optional(),
+});
+
+export const CreateAssetBodySchema = z.object({
+  name: z.string().min(1).max(200),
+  assetType: AssetTypeSchema.optional(),
+  status: AssetStatusSchema.optional(),
+  locationId: z.uuid().nullable().optional(),
+  model: z.string().max(200).nullable().optional(),
+  manufacturer: z.string().max(200).nullable().optional(),
+  notes: z.string().max(5000).nullable().optional(),
+  assetTag: z.string().max(200).nullable().optional(),
+  serialNumber: z.string().max(200).nullable().optional(),
+  systemUuid: z.string().max(200).nullable().optional(),
+  interfaces: z.array(AssetInterfaceInputSchema).max(16).optional(),
+});
+
+export const PatchAssetBodySchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  assetType: AssetTypeSchema.optional(),
+  status: AssetStatusSchema.optional(),
+  locationId: z.uuid().nullable().optional(),
+  model: z.string().max(200).nullable().optional(),
+  manufacturer: z.string().max(200).nullable().optional(),
+  notes: z.string().max(5000).nullable().optional(),
+  assetTag: z.string().max(200).nullable().optional(),
+  serialNumber: z.string().max(200).nullable().optional(),
+  systemUuid: z.string().max(200).nullable().optional(),
+});
+
+export const AddAssetInterfaceBodySchema = AssetInterfaceInputSchema;
+
 export const HealthResponseSchema = z.object({
   status: z.literal("ok"),
   version: z.string(),

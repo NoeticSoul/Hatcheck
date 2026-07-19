@@ -637,6 +637,52 @@ export function phase1ContractTests(
         expect(allowed?.status).toBe("retired");
       });
 
+      it("appendCustodyEvent requireStatus blocks in-transaction and writes nothing", async () => {
+        // The service pre-checks are only a fast path; this in-transaction
+        // precondition is what stops an asset retired between pre-check
+        // and append from ever being deployed.
+        const asset = await store.createAssetWithInterfaces(
+          makeAsset({ name: "Retired Radio", status: "retired" }),
+          [],
+        );
+        const res = await store.appendCustodyEvent(
+          { assetId: asset.id, type: "check_out", holderName: "Kai Holder" },
+          "deployed",
+          undefined,
+          "in_stock",
+        );
+        expect(res !== null && !res.ok).toBe(true);
+        if (res === null || res.ok) throw new Error("expected conflict");
+        expect(res.conflict).toBe("status_conflict");
+        if (res.conflict !== "status_conflict") throw new Error("wrong kind");
+        expect(res.actualStatus).toBe("retired");
+        expect(await store.countCustodyEvents(asset.id)).toBe(0);
+        expect((await store.getAssetById(asset.id))?.status).toBe("retired");
+      });
+
+      it("appendCustodyEvent returns in-transaction assetBefore/assetAfter", async () => {
+        const room = await store.createLocation({ name: "Snapshot Room" });
+        const asset = await store.createAssetWithInterfaces(
+          makeAsset({ name: "Snapshot Scanner" }),
+          [],
+        );
+        const res = await store.appendCustodyEvent(
+          { assetId: asset.id, type: "check_out", holderName: "Sam Snapshot" },
+          "deployed",
+          room.id,
+          "in_stock",
+        );
+        if (res === null || !res.ok) throw new Error("expected ok append");
+        expect(res.assetBefore).toEqual({ status: "in_stock", locationId: null });
+        expect(res.assetAfter).toEqual({
+          status: "deployed",
+          locationId: room.id,
+        });
+        const persisted = await store.getAssetById(asset.id);
+        expect(persisted?.status).toBe("deployed");
+        expect(persisted?.locationId).toBe(room.id);
+      });
+
       it("clearing an identity key frees the value for another asset", async () => {
         const first = await store.createAssetWithInterfaces(
           makeAsset({
@@ -907,6 +953,181 @@ export function phase1ContractTests(
           ),
         );
         expect((await store.getAssetById(asset.id))?.status).toBe("in_stock");
+      });
+
+      it("updates asset location atomically with the event when given", async () => {
+        const room = await store.createLocation({ name: "Room 101" });
+        const bench = await store.createLocation({ name: "Repair Bench" });
+        const asset = await store.createAssetWithInterfaces(makeAsset(), []);
+        expect(asset.locationId).toBeNull();
+
+        // Check-out with a location moves the asset in the same
+        // transaction as the event and the status.
+        custodyOk(
+          await store.appendCustodyEvent(
+            {
+              assetId: asset.id,
+              type: "check_out",
+              holderName: "Taylor Tech",
+              locationId: room.id,
+              locationName: "Room 101",
+            },
+            "deployed",
+            room.id,
+          ),
+        );
+        let current = await store.getAssetById(asset.id);
+        expect(current?.status).toBe("deployed");
+        expect(current?.locationId).toBe(room.id);
+
+        // A conflicting append leaves status AND location untouched.
+        expect(
+          await store.appendCustodyEvent(
+            { assetId: asset.id, type: "check_out", locationId: bench.id },
+            "in_repair",
+            bench.id,
+          ),
+        ).toEqual({ ok: false, conflict: "already_checked_out" });
+        current = await store.getAssetById(asset.id);
+        expect(current?.status).toBe("deployed");
+        expect(current?.locationId).toBe(room.id);
+
+        // Omitting the location leaves it unchanged; null clears it.
+        custodyOk(
+          await store.appendCustodyEvent(
+            { assetId: asset.id, type: "check_in" },
+            "in_stock",
+          ),
+        );
+        current = await store.getAssetById(asset.id);
+        expect(current?.status).toBe("in_stock");
+        expect(current?.locationId).toBe(room.id);
+
+        custodyOk(
+          await store.appendCustodyEvent(
+            { assetId: asset.id, type: "check_out" },
+            "deployed",
+            null,
+          ),
+        );
+        current = await store.getAssetById(asset.id);
+        expect(current?.locationId).toBeNull();
+      });
+
+      it("filters assets by current holder via heldByUserId", async () => {
+        const heldByA = await store.createAssetWithInterfaces(
+          makeAsset({ name: "Held By A" }),
+          [],
+        );
+        const heldByB = await store.createAssetWithInterfaces(
+          makeAsset({ name: "Held By B" }),
+          [],
+        );
+        const formerlyA = await store.createAssetWithInterfaces(
+          makeAsset({ name: "Formerly A" }),
+          [],
+        );
+        const labelOnly = await store.createAssetWithInterfaces(
+          makeAsset({ name: "Label Only" }),
+          [],
+        );
+        const idle = await store.createAssetWithInterfaces(
+          makeAsset({ name: "Idle" }),
+          [],
+        );
+
+        custodyOk(
+          await store.appendCustodyEvent({
+            assetId: heldByA.id,
+            type: "check_out",
+            holderUserId: "user-a",
+            holderName: "Avery Alpha",
+          }),
+        );
+        custodyOk(
+          await store.appendCustodyEvent({
+            assetId: heldByB.id,
+            type: "check_out",
+            holderUserId: "user-b",
+            holderName: "Blake Beta",
+          }),
+        );
+        // formerlyA: checked out by A, checked in, then out to B — the
+        // CURRENT event decides, not history.
+        custodyOk(
+          await store.appendCustodyEvent({
+            assetId: formerlyA.id,
+            type: "check_out",
+            holderUserId: "user-a",
+            holderName: "Avery Alpha",
+          }),
+        );
+        custodyOk(
+          await store.appendCustodyEvent({
+            assetId: formerlyA.id,
+            type: "check_in",
+          }),
+        );
+        custodyOk(
+          await store.appendCustodyEvent({
+            assetId: formerlyA.id,
+            type: "check_out",
+            holderUserId: "user-b",
+            holderName: "Blake Beta",
+          }),
+        );
+        custodyOk(
+          await store.appendCustodyEvent({
+            assetId: labelOnly.id,
+            type: "check_out",
+            holderName: "Visitor Badge 7",
+          }),
+        );
+        void idle;
+
+        const byA = await store.listAssets({
+          limit: 10,
+          heldByUserId: "user-a",
+        });
+        expect(byA.map((a) => a.id)).toEqual([heldByA.id]);
+        expect(await store.countAssets({ heldByUserId: "user-a" })).toBe(1);
+
+        const byB = await store.listAssets({
+          limit: 10,
+          heldByUserId: "user-b",
+        });
+        expect(new Set(byB.map((a) => a.id))).toEqual(
+          new Set([heldByB.id, formerlyA.id]),
+        );
+        expect(await store.countAssets({ heldByUserId: "user-b" })).toBe(2);
+
+        expect(
+          await store.listAssets({ limit: 10, heldByUserId: "user-none" }),
+        ).toEqual([]);
+        expect(await store.countAssets({ heldByUserId: "user-none" })).toBe(0);
+
+        // Checking heldByA back in removes it from the filter.
+        custodyOk(
+          await store.appendCustodyEvent({
+            assetId: heldByA.id,
+            type: "check_in",
+          }),
+        );
+        expect(
+          await store.listAssets({ limit: 10, heldByUserId: "user-a" }),
+        ).toEqual([]);
+        expect(await store.countAssets({ heldByUserId: "user-a" })).toBe(0);
+
+        // Combines with other filters.
+        const byBNamed = await store.listAssets({
+          limit: 10,
+          heldByUserId: "user-b",
+          q: "formerly",
+        });
+        expect(byBNamed.map((a) => a.id)).toEqual([formerlyA.id]);
+        expect(
+          await store.countAssets({ heldByUserId: "user-b", q: "formerly" }),
+        ).toBe(1);
       });
 
       it("leaves asset status untouched when newAssetStatus is omitted", async () => {

@@ -11,10 +11,12 @@ import {
   PatchUserBodySchema,
   UserIdParamsSchema,
   UserListResponseSchema,
+  UserOptionsResponseSchema,
   UserResponseSchema,
 } from "../openapi";
 
 const adminOnly = requireRole("admin");
+const technicianPlus = requireRole("technician", "admin");
 
 // Before/after state recorded in audit entries for user mutations. Only
 // non-sensitive fields: passwordHash never appears here, and a password
@@ -39,6 +41,23 @@ const listUsersRoute = createRoute({
     200: jsonContent(UserListResponseSchema, "All users"),
     401: jsonContent(ErrorSchema, "Not authenticated"),
     403: jsonContent(ErrorSchema, "Admin role required"),
+  },
+});
+
+const userOptionsRoute = createRoute({
+  method: "get",
+  path: "/api/v1/users/options",
+  tags: ["users"],
+  summary: "Active users for holder pickers (technician or admin)",
+  description:
+    "Minimal id/displayName/email list of ACTIVE users, unpaginated; " +
+    "intended for the custody holder picker. Read-only, not audited.",
+  security: cookieSecurity,
+  middleware: [requireAuth, technicianPlus],
+  responses: {
+    200: jsonContent(UserOptionsResponseSchema, "Active users, minimal shape"),
+    401: jsonContent(ErrorSchema, "Not authenticated"),
+    403: jsonContent(ErrorSchema, "Technician or admin role required"),
   },
 });
 
@@ -94,6 +113,18 @@ export function userRoutes() {
   router.openapi(listUsersRoute, async (c) => {
     const users = await c.get("store").listUsers();
     return c.json({ users: users.map(sanitizeUser) }, 200);
+  });
+
+  router.openapi(userOptionsRoute, async (c) => {
+    const users = await c.get("store").listUsers();
+    const items = users
+      .filter((user) => user.isActive)
+      .map((user) => ({
+        id: user.id,
+        displayName: user.displayName,
+        email: user.email,
+      }));
+    return c.json({ items }, 200);
   });
 
   router.openapi(createUserRoute, async (c) => {

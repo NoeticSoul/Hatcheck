@@ -374,6 +374,7 @@ export interface ListAssetsInput {
   assetType?: AssetType;
   locationId?: string;
   q?: string;
+  heldByUserId?: string;
 }
 
 export interface AssetListItem extends AssetRecord {
@@ -389,6 +390,9 @@ export async function listAssets(
   if (input.assetType !== undefined) filters.assetType = input.assetType;
   if (input.locationId !== undefined) filters.locationId = input.locationId;
   if (input.q !== undefined) filters.q = input.q;
+  if (input.heldByUserId !== undefined) {
+    filters.heldByUserId = input.heldByUserId;
+  }
 
   const assets = await store.listAssets({
     ...filters,

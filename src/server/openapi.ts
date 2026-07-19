@@ -245,6 +245,8 @@ export const ListAssetsQuerySchema = z.object({
   assetType: AssetTypeSchema.optional(),
   locationId: z.uuid().optional(),
   q: z.string().min(1).optional(),
+  /** Only assets currently checked out to this user (derived state). */
+  heldByUserId: z.uuid().optional(),
 });
 
 export const AssetInterfaceInputSchema = z.object({
@@ -280,6 +282,52 @@ export const PatchAssetBodySchema = z.object({
 });
 
 export const AddAssetInterfaceBodySchema = AssetInterfaceInputSchema;
+
+// ---- Phase 1: Custody -----------------------------------------------------
+
+// Exactly one of holderUserId/holderLabel is required; that cross-field
+// rule lives in the custody service so its 400 carries a clear message.
+export const CheckOutBodySchema = z.object({
+  holderUserId: z.uuid().optional(),
+  holderLabel: z.string().min(1).max(200).optional(),
+  locationId: z.uuid().optional(),
+  note: z.string().max(2000).optional(),
+});
+
+export const CheckInBodySchema = z.object({
+  locationId: z.uuid().optional(),
+  note: z.string().max(2000).optional(),
+});
+
+export const CustodyActionResponseSchema = z.object({
+  event: CustodyEventSchema,
+  asset: AssetSchema,
+});
+
+export const CustodyListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+export const CustodyListResponseSchema = z.object({
+  items: z.array(CustodyEventSchema),
+  total: z.number(),
+  limit: z.number(),
+  offset: z.number(),
+});
+
+/** Holder-picker option: deliberately minimal, never the full user. */
+export const UserOptionSchema = z
+  .object({
+    id: z.string(),
+    displayName: z.string(),
+    email: z.string(),
+  })
+  .openapi("UserOption");
+
+export const UserOptionsResponseSchema = z.object({
+  items: z.array(UserOptionSchema),
+});
 
 export const HealthResponseSchema = z.object({
   status: z.literal("ok"),

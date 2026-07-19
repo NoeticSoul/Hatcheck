@@ -198,6 +198,14 @@ export interface AssetQuery {
    * non-ASCII, an accepted and documented divergence).
    */
   q?: string;
+  /**
+   * Only assets whose CURRENT custody event — the latest by (at desc,
+   * id desc) — is a check_out held by this user. Derived from the event
+   * stream via the same portable correlated-subquery style as
+   * getCurrentCustodyForAssets; past holders and checked-in assets never
+   * match.
+   */
+  heldByUserId?: string;
 }
 
 export type AssetIdentityKey =
@@ -249,9 +257,26 @@ export interface NewCustodyEvent {
 
 export type CustodyConflict = "already_checked_out" | "not_checked_out";
 
+/** Asset fields custody transitions touch, read inside the transaction. */
+export interface CustodyAssetState {
+  status: AssetStatus;
+  locationId: string | null;
+}
+
 export type CustodyAppendResult =
-  | { ok: true; event: CustodyEventRecord }
-  | { ok: false; conflict: CustodyConflict };
+  | {
+      ok: true;
+      event: CustodyEventRecord;
+      /**
+       * The asset state the event actually transitioned from/to, captured
+       * inside the append transaction — audit records built from these can
+       * never misstate the transition under concurrency.
+       */
+      assetBefore: CustodyAssetState;
+      assetAfter: CustodyAssetState;
+    }
+  | { ok: false; conflict: CustodyConflict }
+  | { ok: false; conflict: "status_conflict"; actualStatus: AssetStatus };
 
 export type ImportMode = "dry_run" | "commit";
 export type ImportStatus = "running" | "completed" | "failed";
@@ -431,14 +456,26 @@ export interface Store {
   // custody — append-only by design: no update or delete methods exist.
   /**
    * Atomically appends a custody event and optionally updates the asset's
-   * status in the same transaction. Enforces alternation inside that
-   * transaction (a check_out on a held asset or a check_in on an idle one
-   * returns a conflict instead of writing), so concurrent double
-   * check-outs cannot race. Returns null when the asset does not exist.
+   * status and location in the same transaction. Enforces alternation
+   * inside that transaction (a check_out on a held asset or a check_in on
+   * an idle one returns a conflict instead of writing). The PostgreSQL
+   * implementation locks the asset row (SELECT ... FOR UPDATE) so
+   * concurrent appends for one asset serialize; SQLite's single
+   * synchronous connection serializes them inherently. When
+   * newAssetLocationId is not undefined, assets.location_id (and
+   * updatedAt) is set inside that same transaction — a conflicting append
+   * therefore leaves status AND location untouched. When requireStatus is
+   * given, the asset's status (read under the lock) must match or the
+   * append returns { conflict: "status_conflict", actualStatus } — this
+   * closes the window where e.g. an asset retired between a caller's
+   * pre-check and the append could still be checked out. Returns null
+   * when the asset does not exist.
    */
   appendCustodyEvent(
     event: NewCustodyEvent,
     newAssetStatus?: AssetStatus,
+    newAssetLocationId?: string | null,
+    requireStatus?: AssetStatus,
   ): Promise<CustodyAppendResult | null>;
   listCustodyEvents(
     assetId: string,

@@ -249,6 +249,9 @@ function assetConditions(
       conditions.push(match);
     }
   }
+  if (query.heldByUserId !== undefined) {
+    conditions.push(currentlyHeldBy(query.heldByUserId));
+  }
   return conditions.length === 0 ? undefined : and(...conditions);
 }
 
@@ -258,6 +261,16 @@ function assetConditions(
  */
 function isLatestCustodyEvent(): SQL {
   return sql`${schema.custodyEvents.id} = (select ce2.id from custody_events ce2 where ce2.asset_id = ${schema.custodyEvents.assetId} order by ce2.at desc, ce2.id desc limit 1)`;
+}
+
+/**
+ * Matches assets whose CURRENT custody event — the latest by (at desc,
+ * id desc) — is a check_out held by the given user. Same portable
+ * correlated-subquery style as isLatestCustodyEvent; past holders and
+ * checked-in assets never match.
+ */
+function currentlyHeldBy(userId: string): SQL {
+  return sql`exists (select 1 from custody_events ce where ce.asset_id = ${schema.assets.id} and ce.type = 'check_out' and ce.holder_user_id = ${userId} and ce.id = (select ce2.id from custody_events ce2 where ce2.asset_id = ${schema.assets.id} order by ce2.at desc, ce2.id desc limit 1))`;
 }
 
 export function createPgStore(databaseUrl: string): Store {
@@ -659,18 +672,35 @@ export function createPgStore(databaseUrl: string): Store {
     async appendCustodyEvent(
       event: NewCustodyEvent,
       newAssetStatus?: AssetStatus,
+      newAssetLocationId?: string | null,
+      requireStatus?: AssetStatus,
     ): Promise<CustodyAppendResult | null> {
-      // The alternation check and the insert share one transaction so
-      // concurrent double check-outs cannot race.
+      // The asset row is locked (FOR UPDATE) before the alternation check:
+      // at READ COMMITTED two concurrent check-outs would otherwise both
+      // read "no open check_out" and both insert. The lock serializes
+      // appends per asset, matching SQLite's inherent serialization.
       return db.transaction(
         async (tx): Promise<CustodyAppendResult | null> => {
           const assetRows = await tx
-            .select({ id: schema.assets.id })
+            .select({
+              id: schema.assets.id,
+              status: schema.assets.status,
+              locationId: schema.assets.locationId,
+            })
             .from(schema.assets)
             .where(eq(schema.assets.id, event.assetId))
-            .limit(1);
-          if (assetRows.length === 0) {
+            .limit(1)
+            .for("update");
+          const asset = assetRows[0];
+          if (asset === undefined) {
             return null;
+          }
+          if (requireStatus !== undefined && asset.status !== requireStatus) {
+            return {
+              ok: false,
+              conflict: "status_conflict",
+              actualStatus: asset.status,
+            };
           }
           const latestRows = await tx
             .select()
@@ -693,13 +723,36 @@ export function createPgStore(databaseUrl: string): Store {
           }
           const row = buildCustodyRow(event);
           await tx.insert(schema.custodyEvents).values(row);
-          if (newAssetStatus !== undefined) {
+          if (
+            newAssetStatus !== undefined ||
+            newAssetLocationId !== undefined
+          ) {
+            const patch: AssetPatch = {};
+            if (newAssetStatus !== undefined) patch.status = newAssetStatus;
+            if (newAssetLocationId !== undefined) {
+              patch.locationId = newAssetLocationId;
+            }
             await tx
               .update(schema.assets)
-              .set({ status: newAssetStatus, updatedAt: Date.now() })
+              .set({ ...patch, updatedAt: Date.now() })
               .where(eq(schema.assets.id, event.assetId));
           }
-          return { ok: true, event: row };
+          const assetBefore = {
+            status: asset.status,
+            locationId: asset.locationId,
+          };
+          return {
+            ok: true,
+            event: row,
+            assetBefore,
+            assetAfter: {
+              status: newAssetStatus ?? assetBefore.status,
+              locationId:
+                newAssetLocationId !== undefined
+                  ? newAssetLocationId
+                  : assetBefore.locationId,
+            },
+          };
         },
       );
     },

@@ -10,6 +10,7 @@ import { aiRoutes } from "./routes/ai";
 import { assetRoutes } from "./routes/assets";
 import { auditRoutes } from "./routes/audit";
 import { authRoutes } from "./routes/auth";
+import { custodyRoutes } from "./routes/custody";
 import { healthRoutes } from "./routes/health";
 import { locationRoutes } from "./routes/locations";
 import { userRoutes } from "./routes/users";
@@ -45,6 +46,7 @@ export function createApp(store: Store, config: AppConfig) {
   app.route("/", userRoutes());
   app.route("/", locationRoutes());
   app.route("/", assetRoutes());
+  app.route("/", custodyRoutes());
   app.route("/", auditRoutes());
   app.route("/", aiRoutes());
 

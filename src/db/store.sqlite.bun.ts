@@ -10,7 +10,7 @@ import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import * as schema from "./schema.sqlite";
 import type { Store } from "./store";
-import { buildSqliteStore, SQLITE_MIGRATIONS_DIR } from "./store.sqlite.core";
+import { buildSqliteStore, sqliteMigrationsFolder } from "./store.sqlite.core";
 
 export function createBunSqliteStore(sqlitePath: string): Store {
   const sqlite = new Database(sqlitePath, { create: true, readwrite: true });
@@ -19,7 +19,7 @@ export function createBunSqliteStore(sqlitePath: string): Store {
   const db = drizzle(sqlite, { schema });
 
   return buildSqliteStore(db, {
-    migrate: () => migrate(db, { migrationsFolder: SQLITE_MIGRATIONS_DIR }),
+    migrate: () => migrate(db, { migrationsFolder: sqliteMigrationsFolder() }),
     close: () => sqlite.close(),
   });
 }

@@ -64,6 +64,15 @@ export const SQLITE_MIGRATIONS_DIR = fileURLToPath(
   new URL("./migrations/sqlite", import.meta.url),
 );
 
+/**
+ * Resolved at migrate() time, not module load: the compiled standalone
+ * binary extracts its embedded migrations to disk first and points this
+ * env var at them (source-tree paths do not exist inside the binary).
+ */
+export function sqliteMigrationsFolder(): string {
+  return process.env.HATCHECK_SQLITE_MIGRATIONS_DIR ?? SQLITE_MIGRATIONS_DIR;
+}
+
 export interface SqliteLifecycle {
   migrate(): void;
   close(): void;

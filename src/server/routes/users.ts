@@ -1,7 +1,7 @@
-import { hash } from "@node-rs/argon2";
 import { createRoute } from "@hono/zod-openapi";
 import type { UserPatch, UserRecord } from "../../db/store";
 import { clientIp, createRouter, errorBody, sanitizeUser } from "../context";
+import { hashPassword } from "../password";
 import { requireAuth, requireRole } from "../middleware/auth";
 import {
   cookieSecurity,
@@ -142,7 +142,7 @@ export function userRoutes() {
       displayName: body.displayName,
       role: body.role,
       authSource: "local",
-      passwordHash: await hash(body.password),
+      passwordHash: await hashPassword(body.password),
     });
     await store.appendAudit({
       action: "user.create",
@@ -191,7 +191,7 @@ export function userRoutes() {
     if (body.role !== undefined) patch.role = body.role;
     if (body.isActive !== undefined) patch.isActive = body.isActive;
     if (body.password !== undefined) {
-      patch.passwordHash = await hash(body.password);
+      patch.passwordHash = await hashPassword(body.password);
     }
 
     const updated = await store.updateUser(id, patch);

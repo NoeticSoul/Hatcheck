@@ -32,6 +32,13 @@ Phase 1 shipped: assets/locations/custody/import/exceptions APIs with
 OpenAPI, the web UI over them, audit views, and basic CSV export of a
 filtered asset list.
 
+Maintainer decision (2026-07-20): the standalone compile target
+(scripts/compile.ts, `bun run compile`, CI artifacts) is pulled forward
+from Phase 3 as an UNSIGNED TEST BUILD so Phase 1 can be exercised on
+real machines. This does not open Phase 3: the release pipeline —
+published SHA256SUMS, attestations, code signing, clean-machine
+verification — remains Phase 3 scope and its gate is untouched.
+
 ### Phase 2 scope (from CHARTER.md section: Phase 2)
 
 Structured authoring (enforced sections, flags, change history, naming),

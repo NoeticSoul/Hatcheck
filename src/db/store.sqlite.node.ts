@@ -6,7 +6,7 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import * as schema from "./schema.sqlite";
 import type { Store } from "./store";
-import { buildSqliteStore, SQLITE_MIGRATIONS_DIR } from "./store.sqlite.core";
+import { buildSqliteStore, sqliteMigrationsFolder } from "./store.sqlite.core";
 
 export function createNodeSqliteStore(sqlitePath: string): Store {
   const sqlite = new Database(sqlitePath);
@@ -15,7 +15,7 @@ export function createNodeSqliteStore(sqlitePath: string): Store {
   const db = drizzle(sqlite, { schema });
 
   return buildSqliteStore(db, {
-    migrate: () => migrate(db, { migrationsFolder: SQLITE_MIGRATIONS_DIR }),
+    migrate: () => migrate(db, { migrationsFolder: sqliteMigrationsFolder() }),
     close: () => sqlite.close(),
   });
 }

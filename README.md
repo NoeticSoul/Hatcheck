@@ -54,6 +54,30 @@ docker compose exec app bun run seed   # once, in a second terminal
 Open <http://localhost:3000> and sign in as `admin@hatcheck.test` with the
 password the seed printed.
 
+## Quickstart C -- Standalone executable (unsigned test build)
+
+Single-file executables with the web UI, migrations, and SQLite engine
+embedded — no runtime install on the target machine. Download
+`hatcheck-windows-x64` or `hatcheck-linux-x64` from the artifacts of any
+green CI run, or build locally:
+
+```sh
+bun run compile                        # linux-x64 + windows-x64 -> dist/bin/
+bun run compile --target windows-x64   # one target
+```
+
+Run the executable from any folder. On first start it creates
+`./data/hatcheck.db` next to your working directory and prints the
+initial admin login **once** (set `HATCHECK_SEED_ADMIN_PASSWORD` and/or
+`HATCHECK_INIT_ADMIN_EMAIL` beforehand to choose your own). Then open
+<http://localhost:3000>. `PORT` and `HATCHECK_SQLITE_PATH` relocate the
+listener and database.
+
+These are **unsigned test builds** pulled forward from the Phase 3
+roadmap by maintainer decision: expect SmartScreen/Gatekeeper warnings,
+and verify the SHA-256 the compile step prints. The signed, attested
+public release pipeline remains Phase 3 (see Release integrity below).
+
 ## Environment variables
 
 All configuration is environment-only; see [.env.example](.env.example) for

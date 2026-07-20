@@ -16,6 +16,14 @@ export async function createSqliteStore(sqlitePath: string): Promise<Store> {
     const { createBunSqliteStore } = await import("./store.sqlite.bun");
     return createBunSqliteStore(sqlitePath);
   }
-  const { createNodeSqliteStore } = await import("./store.sqlite.node");
+  // Computed specifier on purpose: a literal one lets bun build --compile
+  // inline this module, which hoists its top-level better-sqlite3 import
+  // into the binary's startup path — where it cannot resolve. Node
+  // resolves the runtime dynamic import exactly the same either way; the
+  // branch is unreachable under Bun.
+  const nodeDriver = "./store.sqlite.node";
+  const { createNodeSqliteStore } = (await import(nodeDriver)) as {
+    createNodeSqliteStore: (path: string) => Store;
+  };
   return createNodeSqliteStore(sqlitePath);
 }

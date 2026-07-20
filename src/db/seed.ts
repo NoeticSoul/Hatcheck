@@ -4,10 +4,10 @@
 //
 // Generated passwords are printed to stdout exactly once as the handoff
 // mechanism; only argon2 hashes are stored.
-import { randomInt } from "node:crypto";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { hash } from "@node-rs/argon2";
+import { generatePassword } from "../server/bootstrap";
+import { hashPassword } from "../server/password";
 import { loadConfig } from "../config";
 import { createStore } from "./client";
 import type { Role, Store } from "./store";
@@ -31,18 +31,6 @@ const SEED_USERS: SeedUser[] = [
     role: "readonly",
   },
 ];
-
-// No look-alike characters (0/O, 1/l/I) so printed passwords retype cleanly.
-const PASSWORD_CHARSET =
-  "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
-
-export function generatePassword(length = 20): string {
-  let out = "";
-  for (let i = 0; i < length; i++) {
-    out += PASSWORD_CHARSET[randomInt(PASSWORD_CHARSET.length)];
-  }
-  return out;
-}
 
 export interface SeedOptions {
   adminPassword?: string;
@@ -72,7 +60,7 @@ export async function seed(store: Store, opts: SeedOptions = {}): Promise<void> 
       displayName: u.displayName,
       role: u.role,
       authSource: "local",
-      passwordHash: await hash(password),
+      passwordHash: await hashPassword(password),
     });
     createdEmails.push(u.email);
     // The one and only place the plaintext exists: operator handoff.

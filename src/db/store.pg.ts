@@ -294,7 +294,9 @@ export function createPgStore(databaseUrl: string): Store {
       const migrationClient = postgres(databaseUrl, { max: 1 });
       try {
         await migrate(drizzle(migrationClient), {
-          migrationsFolder: MIGRATIONS_DIR,
+          // Env override read at migrate() time; see sqliteMigrationsFolder.
+          migrationsFolder:
+            process.env.HATCHECK_PG_MIGRATIONS_DIR ?? MIGRATIONS_DIR,
         });
       } finally {
         await migrationClient.end();

@@ -25,6 +25,7 @@ import {
   isUniqueViolation,
   type LocationFailure,
 } from "../locations/service";
+import { serializeCsv } from "../imports/csv";
 import {
   normalizeIdentityKey,
   normalizeSystemUuid,
@@ -411,6 +412,118 @@ export async function listAssets(
     currentCustody: byAssetId.get(asset.id) ?? null,
   }));
   return { items, total };
+}
+
+// ---- CSV export (basic report of a filtered asset list) -------------------
+
+/**
+ * Bound on export size: a report, not a dump. A deployment above this
+ * narrows the filters; the cap is far beyond Phase 1 seed scale.
+ */
+export const EXPORT_ROW_CAP = 10_000;
+
+const EXPORT_HEADER = [
+  "id",
+  "name",
+  "asset_type",
+  "status",
+  "location",
+  "model",
+  "manufacturer",
+  "notes",
+  "asset_tag",
+  "serial_number",
+  "system_uuid",
+  "mac_addresses",
+  "current_holder",
+];
+
+export type ExportAssetsResult =
+  | { ok: true; csv: string; rowCount: number }
+  | LocationFailure<400>;
+
+/**
+ * CSV of the filtered asset list — a report (it includes id and the
+ * derived current holder), not an import format. Batch lookups per page,
+ * never per row; the location column is the human hierarchy path.
+ */
+export async function exportAssetsCsv(
+  store: Store,
+  filters: Omit<AssetQuery, "limit" | "offset">,
+): Promise<ExportAssetsResult> {
+  const total = await store.countAssets(filters);
+  if (total > EXPORT_ROW_CAP) {
+    return fail(
+      400,
+      "too_many_rows",
+      `export matches ${total} assets, above the ${EXPORT_ROW_CAP} limit; narrow the filters`,
+    );
+  }
+
+  // Single-statement snapshot for path building (offset pages are not a
+  // consistent snapshot; same reasoning as the import service).
+  const locations = await store.listLocations({
+    limit: 100_000,
+    offset: 0,
+    includeInactive: true,
+  });
+  const locationById = new Map(locations.map((l) => [l.id, l]));
+  const path = (id: string | null): string => {
+    if (id === null) return "";
+    const names: string[] = [];
+    let current = locationById.get(id);
+    // Depth is capped at 3 by the rank rule; the bound is defensive.
+    for (let depth = 0; depth < 4 && current !== undefined; depth += 1) {
+      names.unshift(current.name);
+      current =
+        current.parentId === null
+          ? undefined
+          : locationById.get(current.parentId);
+    }
+    return names.join(" / ");
+  };
+
+  const rows: string[][] = [[...EXPORT_HEADER]];
+  const pageSize = 500;
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await store.listAssets({
+      ...filters,
+      limit: pageSize,
+      offset,
+    });
+    if (page.length === 0) break;
+    const ids = page.map((asset) => asset.id);
+    const custody = await store.getCurrentCustodyForAssets(ids);
+    const holderByAsset = new Map(
+      custody.map((event) => [event.assetId, event.holderName ?? ""]),
+    );
+    const interfaces = await store.listInterfacesForAssets(ids);
+    const macsByAsset = new Map<string, string[]>();
+    for (const iface of interfaces) {
+      const bucket = macsByAsset.get(iface.assetId);
+      if (bucket === undefined) macsByAsset.set(iface.assetId, [iface.mac]);
+      else bucket.push(iface.mac);
+    }
+    for (const asset of page) {
+      rows.push([
+        asset.id,
+        asset.name,
+        asset.assetType,
+        asset.status,
+        path(asset.locationId),
+        asset.model ?? "",
+        asset.manufacturer ?? "",
+        asset.notes ?? "",
+        asset.assetTag ?? "",
+        asset.serialNumber ?? "",
+        asset.systemUuid ?? "",
+        (macsByAsset.get(asset.id) ?? []).join("; "),
+        holderByAsset.get(asset.id) ?? "",
+      ]);
+    }
+    if (page.length < pageSize) break;
+  }
+  return { ok: true, csv: serializeCsv(rows), rowCount: rows.length - 1 };
 }
 
 export type AssetDetailResult =

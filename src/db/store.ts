@@ -397,7 +397,8 @@ export interface Store {
   // audit — append-only by design: no update or delete methods exist.
   appendAudit(entry: NewAuditEntry): Promise<AuditEntry>;
   listAudit(query: AuditQuery): Promise<AuditEntry[]>;
-  countAudit(): Promise<number>;
+  /** Same action filter as listAudit, so paged totals stay consistent. */
+  countAudit(query?: { action?: string }): Promise<number>;
 
   // settings
   getSetting(key: string): Promise<unknown>;
@@ -451,6 +452,10 @@ export interface Store {
     iface: NewAssetInterface,
   ): Promise<AssetInterfaceRecord | null>;
   listAssetInterfaces(assetId: string): Promise<AssetInterfaceRecord[]>;
+  /** Batch form for export/list views: one query for a page of assets. */
+  listInterfacesForAssets(
+    assetIds: string[],
+  ): Promise<AssetInterfaceRecord[]>;
   deleteAssetInterface(id: string): Promise<boolean>;
 
   // custody — append-only by design: no update or delete methods exist.
@@ -514,6 +519,12 @@ export interface Store {
     status?: ExceptionStatus;
   }): Promise<ExceptionRecord[]>;
   countExceptions(status?: ExceptionStatus): Promise<number>;
+  /**
+   * Only an OPEN exception is updated — the UPDATE itself carries
+   * status = 'open', so concurrent resolves cannot overwrite a final
+   * decision. Returns null when the exception does not exist OR is no
+   * longer open; callers re-read to distinguish.
+   */
   resolveException(
     id: string,
     resolution: ExceptionResolution,

@@ -11,7 +11,9 @@ import { assetRoutes } from "./routes/assets";
 import { auditRoutes } from "./routes/audit";
 import { authRoutes } from "./routes/auth";
 import { custodyRoutes } from "./routes/custody";
+import { exceptionRoutes } from "./routes/exceptions";
 import { healthRoutes } from "./routes/health";
+import { importRoutes } from "./routes/imports";
 import { locationRoutes } from "./routes/locations";
 import { userRoutes } from "./routes/users";
 
@@ -24,14 +26,23 @@ export function createApp(store: Store, config: AppConfig) {
     await next();
   });
 
-  // The API is JSON-only; nothing legitimate approaches this size.
-  app.use(
-    "/api/*",
-    bodyLimit({
-      maxSize: 256 * 1024,
-      onError: (c) =>
-        c.json(errorBody("payload_too_large", "Request body too large"), 413),
-    }),
+  // The API is JSON-only — nothing legitimate approaches this size —
+  // except CSV import uploads, which get their own larger cap (a 5000-row
+  // file with every column filled stays well under 2 MiB).
+  const jsonLimit = bodyLimit({
+    maxSize: 256 * 1024,
+    onError: (c) =>
+      c.json(errorBody("payload_too_large", "Request body too large"), 413),
+  });
+  const csvLimit = bodyLimit({
+    maxSize: 2 * 1024 * 1024,
+    onError: (c) =>
+      c.json(errorBody("payload_too_large", "CSV body too large"), 413),
+  });
+  app.use("/api/*", (c, next) =>
+    c.req.path.startsWith("/api/v1/imports/")
+      ? csvLimit(c, next)
+      : jsonLimit(c, next),
   );
 
   app.onError((err, c) => {
@@ -47,6 +58,8 @@ export function createApp(store: Store, config: AppConfig) {
   app.route("/", locationRoutes());
   app.route("/", assetRoutes());
   app.route("/", custodyRoutes());
+  app.route("/", importRoutes());
+  app.route("/", exceptionRoutes());
   app.route("/", auditRoutes());
   app.route("/", aiRoutes());
 
@@ -61,7 +74,7 @@ export function createApp(store: Store, config: AppConfig) {
     info: {
       title: "Hatcheck API",
       version: pkg.version,
-      description: "Self-hosted IT management platform API (Phase 0).",
+      description: "Self-hosted IT management platform API (Phase 1).",
     },
   });
 

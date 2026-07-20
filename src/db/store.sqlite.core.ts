@@ -89,10 +89,16 @@ function ciContains(column: Column, text: string): SQL {
   return sql`lower(${column}) like ${pattern} escape '\\'`;
 }
 
-function byName<T extends { name: string }>(a: T, b: T): number {
+function byName<T extends { name: string; id: string }>(
+  a: T,
+  b: T,
+): number {
   // Normalize in JS: SQLite orders by bytes, PostgreSQL by locale
-  // collation; both stores re-sort so the engines agree exactly.
-  return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+  // collation; both stores re-sort so the engines agree exactly. The id
+  // tie-breaker makes the order total, so equal names cannot reshuffle
+  // between paginated queries.
+  if (a.name !== b.name) return a.name < b.name ? -1 : 1;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
 function buildLocationRow(location: NewLocation): LocationRecord {
@@ -162,7 +168,9 @@ function buildCustodyRow(event: NewCustodyEvent): CustodyEventRecord {
 
 function buildImportJobRow(job: NewImportJob): ImportJobRecord {
   return {
-    id: crypto.randomUUID(),
+    // Time-ordered so (at desc, id desc) is a total newest-first order
+    // even for same-millisecond jobs.
+    id: timeOrderedId(),
     at: Date.now(),
     actorUserId: job.actorUserId ?? null,
     actorEmail: job.actorEmail ?? null,
@@ -192,7 +200,8 @@ function buildImportRowRow(row: NewImportRow): ImportRowRecord {
 
 function buildExceptionRow(exception: NewException): ExceptionRecord {
   return {
-    id: crypto.randomUUID(),
+    // Time-ordered for the same reason as import jobs.
+    id: timeOrderedId(),
     at: Date.now(),
     kind: exception.kind,
     status: "open",
@@ -429,8 +438,15 @@ export function buildSqliteStore<TRun>(
         .all();
     },
 
-    async countAudit(): Promise<number> {
-      const rows = db.select({ n: count() }).from(schema.auditLog).all();
+    async countAudit(query?: { action?: string }): Promise<number> {
+      const conditions = query?.action
+        ? eq(schema.auditLog.action, query.action)
+        : undefined;
+      const rows = db
+        .select({ n: count() })
+        .from(schema.auditLog)
+        .where(conditions)
+        .all();
       return rows[0]?.n ?? 0;
     },
 
@@ -480,7 +496,7 @@ export function buildSqliteStore<TRun>(
         .select()
         .from(schema.locations)
         .where(locationConditions(query))
-        .orderBy(asc(schema.locations.name))
+        .orderBy(asc(schema.locations.name), asc(schema.locations.id))
         .limit(query.limit)
         .offset(query.offset ?? 0)
         .all();
@@ -589,7 +605,7 @@ export function buildSqliteStore<TRun>(
         .select()
         .from(schema.assets)
         .where(assetConditions(query))
-        .orderBy(asc(schema.assets.name))
+        .orderBy(asc(schema.assets.name), asc(schema.assets.id))
         .limit(query.limit)
         .offset(query.offset ?? 0)
         .all();
@@ -668,6 +684,22 @@ export function buildSqliteStore<TRun>(
         .from(schema.assetInterfaces)
         .where(eq(schema.assetInterfaces.assetId, assetId))
         .orderBy(asc(schema.assetInterfaces.createdAt), asc(schema.assetInterfaces.id))
+        .all();
+    },
+
+    async listInterfacesForAssets(
+      assetIds: string[],
+    ): Promise<AssetInterfaceRecord[]> {
+      if (assetIds.length === 0) return [];
+      return db
+        .select()
+        .from(schema.assetInterfaces)
+        .where(inArray(schema.assetInterfaces.assetId, assetIds))
+        .orderBy(
+          asc(schema.assetInterfaces.assetId),
+          asc(schema.assetInterfaces.createdAt),
+          asc(schema.assetInterfaces.id),
+        )
         .all();
     },
 
@@ -993,6 +1025,10 @@ export function buildSqliteStore<TRun>(
       id: string,
       resolution: ExceptionResolution,
     ): Promise<ExceptionRecord | null> {
+      // The UPDATE itself carries status = 'open', closing the
+      // read-then-write window where two concurrent resolves could both
+      // pass a caller's pre-check and silently overwrite each other
+      // (same pattern as updateAsset's statusNot guard).
       const rows = db
         .update(schema.exceptionRecords)
         .set({
@@ -1001,7 +1037,12 @@ export function buildSqliteStore<TRun>(
           resolvedAt: Date.now(),
           resolutionNote: resolution.resolutionNote ?? null,
         })
-        .where(eq(schema.exceptionRecords.id, id))
+        .where(
+          and(
+            eq(schema.exceptionRecords.id, id),
+            eq(schema.exceptionRecords.status, "open"),
+          ),
+        )
         .returning()
         .all();
       return rows[0] ?? null;

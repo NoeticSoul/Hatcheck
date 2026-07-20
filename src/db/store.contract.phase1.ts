@@ -775,6 +775,46 @@ export function phase1ContractTests(
         ]);
       });
 
+      it("batch-lists interfaces for a set of assets", async () => {
+        const alpha = await store.createAssetWithInterfaces(
+          makeAsset({ name: "Batch Alpha" }),
+          [{ mac: "00:00:5e:00:53:50" }, { mac: "00:00:5e:00:53:51" }],
+        );
+        const beta = await store.createAssetWithInterfaces(
+          makeAsset({ name: "Batch Beta" }),
+          [{ mac: "00:00:5e:00:53:52" }],
+        );
+        const bare = await store.createAssetWithInterfaces(
+          makeAsset({ name: "Batch Bare" }),
+          [],
+        );
+
+        const all = await store.listInterfacesForAssets([
+          alpha.id,
+          beta.id,
+          bare.id,
+          "missing-id",
+        ]);
+        expect(all).toHaveLength(3);
+        const byAsset = new Map<string, string[]>();
+        for (const iface of all) {
+          byAsset.set(iface.assetId, [
+            ...(byAsset.get(iface.assetId) ?? []),
+            iface.mac,
+          ]);
+        }
+        // Same-transaction inserts share a createdAt, so intra-asset
+        // order is compared as a set.
+        expect(byAsset.get(alpha.id)?.sort()).toEqual([
+          "00:00:5e:00:53:50",
+          "00:00:5e:00:53:51",
+        ]);
+        expect(byAsset.get(beta.id)).toEqual(["00:00:5e:00:53:52"]);
+        expect(byAsset.has(bare.id)).toBe(false);
+
+        expect(await store.listInterfacesForAssets([])).toEqual([]);
+      });
+
       it("deletes an interface and returns false when already gone", async () => {
         const asset = await store.createAssetWithInterfaces(makeAsset(), [
           { mac: "00:00:5e:00:53:40" },
@@ -1656,6 +1696,29 @@ export function phase1ContractTests(
         expect(
           await store.resolveException("missing-id", { status: "dismissed" }),
         ).toBeNull();
+      });
+
+      it("resolveException refuses a non-open exception (guard in the UPDATE)", async () => {
+        const exc = await store.createException({
+          kind: "import_identity_collision",
+        });
+        const first = await store.resolveException(exc.id, {
+          status: "resolved",
+          resolvedByUserId: "user-1",
+          resolutionNote: "first decision",
+        });
+        expect(first?.status).toBe("resolved");
+
+        // A second decision must not overwrite the first: the UPDATE
+        // matches only status = 'open', so this returns null and the
+        // record keeps the original resolution.
+        const second = await store.resolveException(exc.id, {
+          status: "dismissed",
+          resolvedByUserId: "user-2",
+          resolutionNote: "second decision",
+        });
+        expect(second).toBeNull();
+        expect(await store.getExceptionById(exc.id)).toEqual(first);
       });
     });
   });

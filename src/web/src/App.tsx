@@ -6,8 +6,15 @@ import {
 } from "react-router-dom";
 import { Loader } from "lucide-react";
 import { api, ApiError, type ApiUser } from "./lib/api";
+import { AppLayout } from "./components/layout";
 import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
+import { AssetsPage } from "./pages/Assets";
+import { AssetDetailPage } from "./pages/AssetDetail";
+import { LocationsPage } from "./pages/Locations";
+import { ImportPage } from "./pages/Import";
+import { ExceptionsPage } from "./pages/Exceptions";
+import { AuditPage } from "./pages/Audit";
 
 type AuthState =
   | { kind: "loading" }
@@ -69,12 +76,24 @@ function Protected() {
     );
   }
 
-  return <Dashboard user={state.user} />;
+  return <AppLayout user={state.user} />;
 }
 
 const router = createBrowserRouter([
   { path: "/login", element: <Login /> },
-  { path: "/", element: <Protected /> },
+  {
+    path: "/",
+    element: <Protected />,
+    children: [
+      { index: true, element: <Dashboard /> },
+      { path: "assets", element: <AssetsPage /> },
+      { path: "assets/:id", element: <AssetDetailPage /> },
+      { path: "locations", element: <LocationsPage /> },
+      { path: "import", element: <ImportPage /> },
+      { path: "exceptions", element: <ExceptionsPage /> },
+      { path: "audit", element: <AuditPage /> },
+    ],
+  },
   { path: "*", element: <Navigate to="/" replace /> },
 ]);
 

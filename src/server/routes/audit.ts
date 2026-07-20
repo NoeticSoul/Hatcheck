@@ -32,8 +32,8 @@ export function auditRoutes() {
     const { limit, offset, action } = c.req.valid("query");
     const store = c.get("store");
     const entries = await store.listAudit({ limit, offset, action });
-    // Note: total is the unfiltered count (Store.countAudit takes no query).
-    const total = await store.countAudit();
+    // Same filter as the list, so pagination math stays consistent.
+    const total = await store.countAudit({ action });
     return c.json({ entries, total }, 200);
   });
 

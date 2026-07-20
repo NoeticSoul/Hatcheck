@@ -430,8 +430,14 @@ export function createPgStore(databaseUrl: string): Store {
         .offset(query.offset ?? 0);
     },
 
-    async countAudit(): Promise<number> {
-      const rows = await db.select({ n: count() }).from(schema.auditLog);
+    async countAudit(query?: { action?: string }): Promise<number> {
+      const conditions = query?.action
+        ? eq(schema.auditLog.action, query.action)
+        : undefined;
+      const rows = await db
+        .select({ n: count() })
+        .from(schema.auditLog)
+        .where(conditions);
       return rows[0]?.n ?? 0;
     },
 

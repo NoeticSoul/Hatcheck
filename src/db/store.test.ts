@@ -304,11 +304,15 @@ export function storeContractTests(
         expect(filteredOffset.map((e) => e.id)).toEqual([first.id]);
       });
 
-      it("counts audit entries", async () => {
+      it("counts audit entries, with the same action filter as listAudit", async () => {
         expect(await store.countAudit()).toBe(0);
         await store.appendAudit({ action: "auth.login" });
+        await store.appendAudit({ action: "auth.login" });
         await store.appendAudit({ action: "auth.logout" });
-        expect(await store.countAudit()).toBe(2);
+        expect(await store.countAudit()).toBe(3);
+        expect(await store.countAudit({ action: "auth.login" })).toBe(2);
+        expect(await store.countAudit({ action: "auth.logout" })).toBe(1);
+        expect(await store.countAudit({ action: "missing.action" })).toBe(0);
       });
     });
 

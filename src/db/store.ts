@@ -397,7 +397,8 @@ export interface Store {
   // audit — append-only by design: no update or delete methods exist.
   appendAudit(entry: NewAuditEntry): Promise<AuditEntry>;
   listAudit(query: AuditQuery): Promise<AuditEntry[]>;
-  countAudit(): Promise<number>;
+  /** Same action filter as listAudit, so paged totals stay consistent. */
+  countAudit(query?: { action?: string }): Promise<number>;
 
   // settings
   getSetting(key: string): Promise<unknown>;

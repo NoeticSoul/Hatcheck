@@ -438,8 +438,15 @@ export function buildSqliteStore<TRun>(
         .all();
     },
 
-    async countAudit(): Promise<number> {
-      const rows = db.select({ n: count() }).from(schema.auditLog).all();
+    async countAudit(query?: { action?: string }): Promise<number> {
+      const conditions = query?.action
+        ? eq(schema.auditLog.action, query.action)
+        : undefined;
+      const rows = db
+        .select({ n: count() })
+        .from(schema.auditLog)
+        .where(conditions)
+        .all();
       return rows[0]?.n ?? 0;
     },
 

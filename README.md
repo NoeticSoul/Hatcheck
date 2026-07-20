@@ -7,16 +7,18 @@ with an optional AI layer.
 > The name "Hatcheck" is provisional, pending trademark and domain checks
 > (see [CHARTER.md](CHARTER.md), Gate 0).
 
-> **Status: pre-alpha.** Phase 0 (foundation) is complete: auth, RBAC,
-> append-only audit log, dual-database support, and CI/e2e are shipped and
-> green on both engines. Phase 1 (Assets & Locations) is in progress.
-> Scope, architecture, and roadmap live in [CHARTER.md](CHARTER.md).
+> **Status: pre-alpha.** Phases 0 and 1 are complete: auth, RBAC, the
+> append-only audit log, dual-database support, assets and locations with
+> check-in/check-out custody history, exception-first CSV import with
+> dry-run, CSV export, and the web UI over all of it — green on both
+> engines in CI. Phase 2 (Doc Studio + Knowledge Base) is next. Scope,
+> architecture, and roadmap live in [CHARTER.md](CHARTER.md).
 
 ## Planned features
 
 | Module | Summary | Status |
 | --- | --- | --- |
-| Assets & Locations | Device/peripheral/license records, buildings/rooms, check-in/check-out, lifecycle states | In progress (Phase 1) |
+| Assets & Locations | Device/peripheral/license records, buildings/rooms, check-in/check-out, lifecycle states, CSV import/export | Shipped (Phase 1) |
 | Doc Studio | Guided SOP/KB authoring with enforced standards; export to Markdown/HTML/docx/PDF | Planned (Phase 2) |
 | Knowledge Base | Searchable library of rendered docs with review-date tracking | Planned (Phase 2) |
 | Imaging Pipeline | Per-device deployment state board with configurable stages and evidence | Planned (Phase 3) |

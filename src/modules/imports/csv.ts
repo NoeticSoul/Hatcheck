@@ -123,3 +123,19 @@ export function parseCsv(text: string): CsvParseResult {
 
   return { ok: true, records };
 }
+
+/**
+ * Serialize records to RFC 4180 CSV (CRLF record ends, quotes doubled).
+ * Cells that spreadsheet apps would treat as formulas (leading = + - @ or
+ * a control char) are prefixed with a single quote — the standard export
+ * mitigation against CSV formula injection via stored data.
+ */
+export function serializeCsv(records: string[][]): string {
+  const cell = (value: string): string => {
+    let v = value;
+    if (/^[=+\-@\t\r]/.test(v)) v = `'${v}`;
+    if (/[",\r\n]/.test(v)) v = `"${v.replace(/"/g, '""')}"`;
+    return v;
+  };
+  return records.map((r) => r.map(cell).join(",") + "\r\n").join("");
+}

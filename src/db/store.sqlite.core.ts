@@ -687,6 +687,22 @@ export function buildSqliteStore<TRun>(
         .all();
     },
 
+    async listInterfacesForAssets(
+      assetIds: string[],
+    ): Promise<AssetInterfaceRecord[]> {
+      if (assetIds.length === 0) return [];
+      return db
+        .select()
+        .from(schema.assetInterfaces)
+        .where(inArray(schema.assetInterfaces.assetId, assetIds))
+        .orderBy(
+          asc(schema.assetInterfaces.assetId),
+          asc(schema.assetInterfaces.createdAt),
+          asc(schema.assetInterfaces.id),
+        )
+        .all();
+    },
+
     async deleteAssetInterface(id: string): Promise<boolean> {
       const rows = db
         .select({ id: schema.assetInterfaces.id })

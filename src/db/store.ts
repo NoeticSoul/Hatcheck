@@ -452,6 +452,10 @@ export interface Store {
     iface: NewAssetInterface,
   ): Promise<AssetInterfaceRecord | null>;
   listAssetInterfaces(assetId: string): Promise<AssetInterfaceRecord[]>;
+  /** Batch form for export/list views: one query for a page of assets. */
+  listInterfacesForAssets(
+    assetIds: string[],
+  ): Promise<AssetInterfaceRecord[]>;
   deleteAssetInterface(id: string): Promise<boolean>;
 
   // custody — append-only by design: no update or delete methods exist.

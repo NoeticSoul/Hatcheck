@@ -7,28 +7,45 @@ If a request conflicts with the charter, say so before implementing.
 
 ## Current phase
 
-Phase 1 — Assets & Locations. Phase 0 gate is CLOSED (foundation, auth,
-RBAC, audit log, dual-DB CI, Docker Compose all shipped). Do not build ahead
-of Phase 1 gate criteria. Update this section as phases close.
+Phase 2 — Doc Studio + Knowledge Base. Phase 1 gate is CLOSED: all four
+criteria are verified by automated tests and by green CI on both database
+engines. Do not build ahead of Phase 2 gate criteria. Update this section
+as phases close.
 
-### Phase 1 scope
+### Phase 1 gate record (closed)
 
-Asset CRUD, locations, user assignment, check-in/check-out with full
-history, CSV import, search, and audit views. Everything lands API-first:
-schema and migration -> endpoints with tests and OpenAPI -> UI.
-
-### Phase 1 gate criteria (work is not done until all pass)
-
-1. 500 synthetic assets imported via CSV in one run, with a per-row result
-   report.
-2. Every mutating action on assets, locations, and assignments appears in
-   the audit log with actor, timestamp, and before/after state.
-3. A check-out -> check-in round trip preserves complete custody history;
-   nothing is overwritten.
+1. 500 synthetic assets imported via CSV in one run with a per-row result
+   report — src/server/imports.test.ts gate suite, including an
+   idempotent re-run that creates nothing at the same scale.
+2. Every mutating action on assets, locations, and assignments writes an
+   audit record with actor, timestamp, and before/after state — asserted
+   across the API suites, including assets persisted by an import run
+   that aborts mid-way (fault-injection test in
+   src/modules/imports/service.test.ts).
+3. The check-out -> check-in round trip preserves complete custody
+   history — API gate test in src/server/custody.test.ts plus a
+   Playwright flow through the real UI (tests/e2e/assets.spec.ts).
 4. CI green on both PostgreSQL and SQLite, including the import and
-   custody-history test suites.
+   custody-history suites (dual-engine matrix in .github/workflows).
 
-### Phase 1 domain rules
+Phase 1 shipped: assets/locations/custody/import/exceptions APIs with
+OpenAPI, the web UI over them, audit views, and basic CSV export of a
+filtered asset list.
+
+### Phase 2 scope (from CHARTER.md section: Phase 2)
+
+Structured authoring (enforced sections, flags, change history, naming),
+Markdown/HTML/docx export, KB rendering and search, review-date tracking.
+Everything lands API-first, as before: schema and migration -> endpoints
+with tests and OpenAPI -> UI.
+
+### Phase 2 gate criteria (work is not done until all pass)
+
+1. A real SOP authored end-to-end in the tool.
+2. An exported docx passes a manual standards checklist.
+3. The stale-doc flag fires on a back-dated article.
+
+### Standing Phase 1 domain rules (shipped code; still binding)
 
 - **Custody is an append-only event stream.** Check-out and check-in create
   custody events; current holder is derived state, never a mutable field
@@ -53,12 +70,12 @@ schema and migration -> endpoints with tests and OpenAPI -> UI.
 - **Search is server-side and paginated** from the start; no
   load-everything-then-filter UI patterns, even at seed-data scale.
 
-### Explicitly NOT in Phase 1 (defer, even if adjacent)
+### Explicitly NOT in Phase 2 (defer, even if adjacent)
 
-Connectors of any kind including AD/LDAP (Phase 4), imaging pipeline
-(Phase 3), Doc Studio and KB (Phase 2), reporting/export views beyond basic
-CSV of a filtered asset list, AI features, standalone binary builds
-(Phase 3). If a Phase 1 task seems to need one of these, stop and flag it.
+Imaging pipeline and standalone binary builds (Phase 3), connectors of any
+kind including AD/LDAP (Phase 4), reporting/saved views/XLSX export and
+scoped API keys (Phase 4), AI features (Phase 3+, adapter stays a stub).
+If a Phase 2 task seems to need one of these, stop and flag it.
 
 ## Stack (do not substitute without discussion)
 

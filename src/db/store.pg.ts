@@ -654,6 +654,21 @@ export function createPgStore(databaseUrl: string): Store {
       return row;
     },
 
+    async listInterfacesForAssets(
+      assetIds: string[],
+    ): Promise<AssetInterfaceRecord[]> {
+      if (assetIds.length === 0) return [];
+      return db
+        .select()
+        .from(schema.assetInterfaces)
+        .where(inArray(schema.assetInterfaces.assetId, assetIds))
+        .orderBy(
+          asc(schema.assetInterfaces.assetId),
+          asc(schema.assetInterfaces.createdAt),
+          asc(schema.assetInterfaces.id),
+        );
+    },
+
     async listAssetInterfaces(
       assetId: string,
     ): Promise<AssetInterfaceRecord[]> {

@@ -14,6 +14,7 @@ import type {
   Role,
   Store,
 } from "../db/store";
+import { parseCsv } from "../modules/imports/csv";
 import { createApp } from "./app";
 
 const TEST_PASSWORD = "correct-horse-battery-staple";
@@ -1044,5 +1045,146 @@ describe("OpenAPI document", () => {
       doc.paths["/api/v1/assets/{id}/interfaces/{interfaceId}"];
     expect(ifaceItem).toBeDefined();
     expect(ifaceItem.delete).toBeDefined();
+  });
+});
+
+describe("asset CSV export", () => {
+  it("requires authentication", async () => {
+    const { app } = await makeApp();
+    const res = await app.request("/api/v1/assets/export");
+    expect(res.status).toBe(401);
+  });
+
+  it("exports the filtered list with location path, MACs, and holder", async () => {
+    const { app, store, cookie } = await makeAppWithAdmin();
+    const siteRes = await jsonRequest(app, "/api/v1/locations", "POST", cookie, {
+      name: "Export Site",
+      kind: "site",
+    });
+    const { location: site } = (await siteRes.json()) as {
+      location: { id: string };
+    };
+    const roomRes = await jsonRequest(app, "/api/v1/locations", "POST", cookie, {
+      name: "Export Room",
+      kind: "room",
+      parentId: site.id,
+    });
+    const { location: room } = (await roomRes.json()) as {
+      location: { id: string };
+    };
+
+    const { asset: laptop } = await createAsset(app, cookie, {
+      name: "Export Laptop",
+      serialNumber: "SN-EXP-1",
+      assetTag: "HT-EXP-1",
+      locationId: room.id,
+      interfaces: [
+        { mac: "00:00:5e:00:53:60" },
+        { mac: "00:00:5e:00:53:61" },
+      ],
+    });
+    await createAsset(app, cookie, {
+      name: "Export Dock",
+      serialNumber: "SN-EXP-2",
+      status: "in_repair",
+    });
+    const checkout = await jsonRequest(
+      app,
+      `/api/v1/assets/${laptop.id}/checkout`,
+      "POST",
+      cookie,
+      { holderLabel: "Field Tech" },
+    );
+    expect(checkout.status).toBe(201);
+
+    const res = await app.request("/api/v1/assets/export", {
+      headers: { cookie },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/csv");
+    expect(res.headers.get("content-disposition")).toContain("attachment");
+    const csv = await res.text();
+    const parsed = parseCsv(csv);
+    if (!parsed.ok) throw new Error(parsed.message);
+    const [header, ...rows] = parsed.records.map((r) => r.cells);
+    expect(header).toEqual([
+      "id",
+      "name",
+      "asset_type",
+      "status",
+      "location",
+      "model",
+      "manufacturer",
+      "notes",
+      "asset_tag",
+      "serial_number",
+      "system_uuid",
+      "mac_addresses",
+      "current_holder",
+    ]);
+    expect(rows).toHaveLength(2);
+    const laptopRow = rows.find((r) => r[0] === laptop.id);
+    expect(laptopRow).toBeDefined();
+    expect(laptopRow?.[1]).toBe("Export Laptop");
+    expect(laptopRow?.[3]).toBe("deployed");
+    expect(laptopRow?.[4]).toBe("Export Site / Export Room");
+    expect(laptopRow?.[9]).toBe("SN-EXP-1");
+    expect(laptopRow?.[11]?.split("; ").sort()).toEqual([
+      "00:00:5e:00:53:60",
+      "00:00:5e:00:53:61",
+    ]);
+    expect(laptopRow?.[12]).toBe("Field Tech");
+
+    // Filters narrow the export exactly like the list.
+    const filtered = await app.request(
+      "/api/v1/assets/export?status=in_repair",
+      { headers: { cookie } },
+    );
+    const filteredParsed = parseCsv(await filtered.text());
+    if (!filteredParsed.ok) throw new Error(filteredParsed.message);
+    expect(filteredParsed.records).toHaveLength(2);
+    expect(filteredParsed.records[1]?.cells[1]).toBe("Export Dock");
+
+    // Reads are not audited; the export leaves no audit entries beyond
+    // the mutations that set the data up.
+    const exportAudits = (
+      await store.listAudit({ limit: 50 })
+    ).filter((entry) => entry.action.startsWith("export"));
+    expect(exportAudits).toEqual([]);
+  });
+
+  it("escapes hostile values and stays parseable", async () => {
+    const { app, cookie } = await makeAppWithAdmin();
+    await createAsset(app, cookie, {
+      name: 'Tricky, "Unit"',
+      serialNumber: "SN-EXP-3",
+      notes: "line one\nline two",
+      manufacturer: "=HYPERLINK(1)",
+    });
+    const res = await app.request("/api/v1/assets/export", {
+      headers: { cookie },
+    });
+    const parsed = parseCsv(await res.text());
+    if (!parsed.ok) throw new Error(parsed.message);
+    const row = parsed.records[1]?.cells;
+    expect(row?.[1]).toBe('Tricky, "Unit"');
+    expect(row?.[7]).toBe("line one\nline two");
+    // Formula guard: the leading = is neutralized in the export.
+    expect(row?.[6]).toBe("'=HYPERLINK(1)");
+  });
+
+  it("allows readonly users, matching list visibility", async () => {
+    const { app, store, cookie } = await makeAppWithAdmin();
+    await createAsset(app, cookie, {
+      name: "Visible Asset",
+      serialNumber: "SN-EXP-4",
+    });
+    await seedUser(store, "viewer@hatcheck.test", "readonly");
+    const viewer = await loginAs(app, "viewer@hatcheck.test");
+    const res = await app.request("/api/v1/assets/export", {
+      headers: { cookie: viewer },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("Visible Asset");
   });
 });

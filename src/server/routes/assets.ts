@@ -3,12 +3,13 @@
 // coupling) live in src/modules/assets/service.ts; RBAC is enforced here
 // at the API layer and every mutation writes an audit record (CLAUDE.md
 // hard rule 5).
-import { createRoute } from "@hono/zod-openapi";
+import { createRoute, z } from "@hono/zod-openapi";
 import {
   addInterface,
   assetSnapshot,
   createAsset,
   deleteAsset,
+  exportAssetsCsv,
   getAssetDetail,
   listAssets,
   removeInterface,
@@ -28,6 +29,7 @@ import {
   cookieSecurity,
   CreateAssetBodySchema,
   ErrorSchema,
+  ExportAssetsQuerySchema,
   jsonContent,
   ListAssetsQuerySchema,
   PatchAssetBodySchema,
@@ -47,6 +49,32 @@ const listAssetsRoute = createRoute({
   responses: {
     200: jsonContent(AssetListResponseSchema, "Filtered page of assets"),
     400: jsonContent(ErrorSchema, "Validation error"),
+    401: jsonContent(ErrorSchema, "Not authenticated"),
+  },
+});
+
+const exportAssetsRoute = createRoute({
+  method: "get",
+  path: "/api/v1/assets/export",
+  tags: ["assets"],
+  summary: "Export the filtered asset list as CSV",
+  description:
+    "A basic report of the current filter match (same filters as the " +
+    "list, no pagination): descriptive fields, identity keys, interface " +
+    "MACs, and the derived current holder. Bounded; narrow the filters " +
+    "if the match exceeds the row cap.",
+  security: cookieSecurity,
+  middleware: [requireAuth],
+  request: { query: ExportAssetsQuerySchema },
+  responses: {
+    200: {
+      content: { "text/csv": { schema: z.string() } },
+      description: "CSV report of the filtered assets",
+    },
+    400: jsonContent(
+      ErrorSchema,
+      "Validation error, or the match exceeds the export row cap",
+    ),
     401: jsonContent(ErrorSchema, "Not authenticated"),
   },
 });
@@ -191,6 +219,20 @@ export function assetRoutes() {
       },
       200,
     );
+  });
+
+  // Registered before the {id} route so the static "export" segment can
+  // never be captured as an asset id, whatever the router's tie-break.
+  router.openapi(exportAssetsRoute, async (c) => {
+    const query = c.req.valid("query");
+    const result = await exportAssetsCsv(c.get("store"), query);
+    if (!result.ok) {
+      return c.json(errorBody(result.code, result.message), result.status);
+    }
+    return c.body(result.csv, 200, {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": 'attachment; filename="hatcheck-assets.csv"',
+    });
   });
 
   router.openapi(getAssetRoute, async (c) => {

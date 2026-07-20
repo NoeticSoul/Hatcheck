@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCsv } from "./csv";
+import { parseCsv, serializeCsv } from "./csv";
 
 function cells(result: ReturnType<typeof parseCsv>): string[][] {
   if (!result.ok) throw new Error(`parse failed: ${result.message}`);
@@ -99,5 +99,36 @@ describe("parseCsv", () => {
       ok: false,
       message: expect.stringContaining("quote may only start a field"),
     });
+  });
+});
+
+describe("serializeCsv", () => {
+  it("writes CRLF records and quotes only where needed", () => {
+    const csv = serializeCsv([
+      ["name", "notes"],
+      ["Plain", 'has "quotes", commas'],
+    ]);
+    expect(csv).toBe('name,notes\r\nPlain,"has ""quotes"", commas"\r\n');
+  });
+
+  it("quotes embedded newlines", () => {
+    const csv = serializeCsv([["a\nb"]]);
+    expect(csv).toBe('"a\nb"\r\n');
+  });
+
+  it("neutralizes formula-leading cells", () => {
+    const csv = serializeCsv([["=SUM(A1)", "+1", "-Dock", "@x", "safe"]]);
+    expect(csv).toBe("'=SUM(A1),'+1,'-Dock,'@x,safe\r\n");
+  });
+
+  it("round-trips through parseCsv", () => {
+    const records = [
+      ["name", "notes"],
+      ['Tricky "Unit"', "line one\nline two, with comma"],
+      ["Plain", ""],
+    ];
+    const parsed = parseCsv(serializeCsv(records));
+    if (!parsed.ok) throw new Error(parsed.message);
+    expect(parsed.records.map((r) => r.cells)).toEqual(records);
   });
 });

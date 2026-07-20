@@ -249,6 +249,15 @@ export const ListAssetsQuerySchema = z.object({
   heldByUserId: z.uuid().optional(),
 });
 
+/** Same filters as the list, minus pagination: exports the whole match. */
+export const ExportAssetsQuerySchema = z.object({
+  status: AssetStatusSchema.optional(),
+  assetType: AssetTypeSchema.optional(),
+  locationId: z.uuid().optional(),
+  q: z.string().min(1).optional(),
+  heldByUserId: z.uuid().optional(),
+});
+
 export const AssetInterfaceInputSchema = z.object({
   mac: z.string().min(1),
   label: z.string().max(100).nullable().optional(),

@@ -8,7 +8,7 @@ import {
   type FormEvent,
 } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Plus, Search } from "lucide-react";
+import { Download, Plus, Search } from "lucide-react";
 import {
   api,
   ApiError,
@@ -433,6 +433,25 @@ export function AssetsPage() {
         </Select>
         <Button type="submit" variant="outline">
           Search
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => {
+            // Server-generated CSV of the CURRENT committed filters; the
+            // attachment disposition keeps the SPA in place.
+            const params = new URLSearchParams();
+            if (q !== "") params.set("q", q);
+            if (status !== "") params.set("status", status);
+            if (assetType !== "") params.set("assetType", assetType);
+            const qs = params.toString();
+            window.location.assign(
+              `/api/v1/assets/export${qs === "" ? "" : `?${qs}`}`,
+            );
+          }}
+        >
+          <Download className="h-4 w-4" aria-hidden="true" />
+          Export CSV
         </Button>
       </form>
 

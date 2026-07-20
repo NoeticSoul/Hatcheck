@@ -316,6 +316,132 @@ export const CustodyListResponseSchema = z.object({
   offset: z.number(),
 });
 
+// ---- Phase 1: CSV import & exceptions -------------------------------------
+
+export const ImportModeSchema = z
+  .enum(["dry_run", "commit"])
+  .openapi("ImportMode");
+
+export const ImportJobSchema = z
+  .object({
+    id: z.string(),
+    at: z.number(),
+    actorUserId: z.string().nullable(),
+    actorEmail: z.string().nullable(),
+    filename: z.string().nullable(),
+    fileHash: z.string(),
+    mode: ImportModeSchema,
+    status: z.enum(["running", "completed", "failed"]),
+    totalRows: z.number(),
+    createdCount: z.number(),
+    skippedCount: z.number(),
+    collisionCount: z.number(),
+    errorCount: z.number(),
+  })
+  .openapi("ImportJob");
+
+export const ImportRowSchema = z
+  .object({
+    id: z.string(),
+    jobId: z.string(),
+    /** 1-based data-row ordinal; the header row is not counted. */
+    rowNumber: z.number(),
+    outcome: z.enum(["created", "skipped_duplicate", "collision", "error"]),
+    message: z.string().nullable(),
+    assetId: z.string().nullable(),
+    /** JSON object of the row's cells, keyed by canonical column name. */
+    raw: z.string().nullable(),
+  })
+  .openapi("ImportRow");
+
+export const RunImportQuerySchema = z.object({
+  mode: ImportModeSchema,
+  filename: z.string().min(1).max(200).optional(),
+});
+
+export const ImportRunResponseSchema = z.object({
+  job: ImportJobSchema,
+  rows: z.array(ImportRowSchema),
+  priorImport: ImportJobSchema.nullable(),
+});
+
+export const ImportJobResponseSchema = z.object({ job: ImportJobSchema });
+
+export const ImportListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+// Rows page cap is higher than other lists so a full 500-row report
+// (gate criterion 1) stays retrievable in one request.
+export const ImportRowListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(1000).default(100),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+export const ImportListResponseSchema = z.object({
+  items: z.array(ImportJobSchema),
+  total: z.number(),
+  limit: z.number(),
+  offset: z.number(),
+});
+
+export const ImportRowListResponseSchema = z.object({
+  items: z.array(ImportRowSchema),
+  total: z.number(),
+  limit: z.number(),
+  offset: z.number(),
+});
+
+export const ImportIdParamsSchema = z.object({
+  id: z.string().min(1),
+});
+
+export const ExceptionStatusSchema = z
+  .enum(["open", "resolved", "dismissed"])
+  .openapi("ExceptionStatus");
+
+export const ExceptionSchema = z
+  .object({
+    id: z.string(),
+    at: z.number(),
+    kind: z.enum(["import_identity_collision"]),
+    status: ExceptionStatusSchema,
+    assetId: z.string().nullable(),
+    importRowId: z.string().nullable(),
+    details: z.string().nullable(),
+    resolvedByUserId: z.string().nullable(),
+    resolvedAt: z.number().nullable(),
+    resolutionNote: z.string().nullable(),
+  })
+  .openapi("ExceptionRecord");
+
+export const ExceptionListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+  status: ExceptionStatusSchema.optional(),
+});
+
+export const ExceptionListResponseSchema = z.object({
+  items: z.array(ExceptionSchema),
+  total: z.number(),
+  limit: z.number(),
+  offset: z.number(),
+});
+
+export const ExceptionResponseSchema = z.object({
+  exception: ExceptionSchema,
+});
+
+export const ExceptionIdParamsSchema = z.object({
+  id: z.string().min(1),
+});
+
+export const ResolveExceptionBodySchema = z.object({
+  status: z.enum(["resolved", "dismissed"]),
+  note: z.string().max(2000).optional(),
+});
+
 /** Holder-picker option: deliberately minimal, never the full user. */
 export const UserOptionSchema = z
   .object({

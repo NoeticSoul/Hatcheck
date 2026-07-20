@@ -1657,6 +1657,29 @@ export function phase1ContractTests(
           await store.resolveException("missing-id", { status: "dismissed" }),
         ).toBeNull();
       });
+
+      it("resolveException refuses a non-open exception (guard in the UPDATE)", async () => {
+        const exc = await store.createException({
+          kind: "import_identity_collision",
+        });
+        const first = await store.resolveException(exc.id, {
+          status: "resolved",
+          resolvedByUserId: "user-1",
+          resolutionNote: "first decision",
+        });
+        expect(first?.status).toBe("resolved");
+
+        // A second decision must not overwrite the first: the UPDATE
+        // matches only status = 'open', so this returns null and the
+        // record keeps the original resolution.
+        const second = await store.resolveException(exc.id, {
+          status: "dismissed",
+          resolvedByUserId: "user-2",
+          resolutionNote: "second decision",
+        });
+        expect(second).toBeNull();
+        expect(await store.getExceptionById(exc.id)).toEqual(first);
+      });
     });
   });
 }

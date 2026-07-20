@@ -514,6 +514,12 @@ export interface Store {
     status?: ExceptionStatus;
   }): Promise<ExceptionRecord[]>;
   countExceptions(status?: ExceptionStatus): Promise<number>;
+  /**
+   * Only an OPEN exception is updated — the UPDATE itself carries
+   * status = 'open', so concurrent resolves cannot overwrite a final
+   * decision. Returns null when the exception does not exist OR is no
+   * longer open; callers re-read to distinguish.
+   */
   resolveException(
     id: string,
     resolution: ExceptionResolution,

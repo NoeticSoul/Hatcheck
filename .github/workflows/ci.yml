@@ -94,12 +94,12 @@ jobs:
       - name: Compile standalone binaries
         run: bun run compile
       - name: Upload Windows binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: hatcheck-windows-x64
           path: dist/bin/hatcheck-windows-x64.exe
       - name: Upload Linux binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: hatcheck-linux-x64
           path: dist/bin/hatcheck-linux-x64

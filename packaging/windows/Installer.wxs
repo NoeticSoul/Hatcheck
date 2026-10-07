@@ -24,9 +24,9 @@
     <Launch Condition="REMOVE ~= &quot;ALL&quot; OR (HATCHECKSERVERURL AND HATCHECKSERVERURL ~&lt;&lt; &quot;https://&quot; AND NOT HATCHECKSERVERURL &gt;&lt; &quot;@&quot; AND NOT HATCHECKSERVERURL &gt;&lt; &quot;?&quot; AND NOT HATCHECKSERVERURL &gt;&lt; &quot;#&quot;)"
             Message="Set HATCHECKSERVERURL to your company's HTTPS Hatcheck address without credentials, query, or fragment. The launcher also validates the address before opening it." />
 
+    <!-- WixUI_Minimal sets ARPNOMODIFY; redeclaring it causes a duplicate symbol. -->
     <ui:WixUI Id="WixUI_Minimal" />
     <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
-    <Property Id="ARPNOMODIFY" Value="1" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/NoeticSoul/Hatcheck" />
 
     <StandardDirectory Id="ProgramFiles64Folder">

@@ -50,13 +50,14 @@ function Get-MsiProperty {
     $database = $installer.OpenDatabase($Path, 0)
     $query = 'SELECT `Value` FROM `Property` WHERE `Property` = ''' + $Name + ''''
     $view = $database.OpenView($query)
-    $view.Execute()
+    # COM methods can emit null/status values; only the property belongs in the output.
+    [void]$view.Execute()
     try {
         $record = $view.Fetch()
         if ($null -eq $record) { return $null }
         return $record.StringData(1)
     } finally {
-        $view.Close()
+        [void]$view.Close()
         [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($view)
         [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($database)
         [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($installer)

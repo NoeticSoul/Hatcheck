@@ -8,7 +8,7 @@
 import { hash } from "@node-rs/argon2";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../config";
-import { createSqliteStore } from "../db/store.sqlite";
+import { createTestStore as createSqliteStore } from "../test/store";
 import type {
   AssetRecord,
   ExceptionRecord,

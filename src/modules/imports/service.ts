@@ -17,10 +17,10 @@
 //   reasons and the rest proceed (per-row result report, gate criterion 1).
 // - MAC addresses are per-interface attributes, never identity keys: they
 //   are parsed onto interfaces and play no part in matching.
-// - Audit entries for created assets and exceptions are written by THIS
-//   module, immediately after each mutation, so a run aborted mid-way
-//   leaves nothing unaudited (hard rule 5); the route adds only the
-//   per-run summary entry.
+// - Each row commits its mutations, audit trail, report, and durable job
+//   progress together. A later failure preserves earlier complete rows.
+// - Job creation and final states are audited in the same transaction;
+//   dry runs persist the same auditable report without inventory mutations.
 import { createHash } from "node:crypto";
 import type {
   AssetRecord,
@@ -746,26 +746,47 @@ export async function runAssetImport(
   const priorImport = await store.findCompletedImportByHash(fileHash);
   const locations = await loadLocationIndex(store);
   const commit = input.mode === "commit";
-  // Snapshotted once per run. Two commits racing on the same conflict can
-  // therefore still each raise an exception — accepted: duplicate OPEN
-  // exceptions are review noise, never a merged identity, and later runs
-  // dedupe against both.
-  const openSignatures = commit
-    ? await loadOpenCollisionSignatures(store)
-    : new Set<string>();
-
-  const job = await store.createImportJob({
+  const audit = (action: string, jobId: string, details: unknown) => ({
+    action,
     actorUserId: input.actor.actorUserId,
     actorEmail: input.actor.actorEmail,
-    filename: input.filename,
-    fileHash,
-    mode: input.mode,
+    entityType: "import",
+    entityId: jobId,
+    details,
+    ip: input.ip,
+  });
+  const job = await store.transaction(async (tx) => {
+    const created = await tx.createImportJob({
+      actorUserId: input.actor.actorUserId,
+      actorEmail: input.actor.actorEmail,
+      filename: input.filename,
+      fileHash,
+      mode: input.mode,
+    });
+    const running = await tx.completeImportJob(created.id, {
+      status: "running",
+      totalRows: dataRecords.length,
+      createdCount: 0,
+      skippedCount: 0,
+      collisionCount: 0,
+      errorCount: 0,
+    });
+    if (running === null) throw new Error("Import job disappeared during creation");
+    await tx.appendAudit(audit("import.start", running.id, {
+      before: null,
+      after: running,
+      filename: input.filename,
+      fileHash,
+      mode: input.mode,
+      totalRows: dataRecords.length,
+    }));
+    return running;
   });
 
   const rows: ImportRowRecord[] = [];
   const createdAssets: AssetRecord[] = [];
   const exceptions: ExceptionRecord[] = [];
-  const counts = { created: 0, skipped: 0, collision: 0, error: 0 };
+  let counts = { created: 0, skipped: 0, collision: 0, error: 0 };
   const countKey = {
     created: "created",
     skipped_duplicate: "skipped",
@@ -777,6 +798,14 @@ export async function runAssetImport(
     serialNumberNorm: new Map(),
     systemUuidNorm: new Map(),
   };
+  const progress = (status: "running" | "completed" | "failed", current = counts) => ({
+    status,
+    totalRows: dataRecords.length,
+    createdCount: current.created,
+    skippedCount: current.skipped,
+    collisionCount: current.collision,
+    errorCount: current.error,
+  });
 
   try {
     for (let i = 0; i < dataRecords.length; i += 1) {
@@ -790,104 +819,115 @@ export async function runAssetImport(
         raw[canonical] = record.cells[col] ?? "";
       }
 
-      const result = await processRow(
-        store,
-        record.cells,
-        headers,
-        locations,
-        claims,
-        rowNumber,
-        commit,
-        { jobId: job.id, actor: input.actor, ip: input.ip },
-      );
-      const importRow = await store.appendImportRow({
-        jobId: job.id,
-        rowNumber,
-        outcome: result.outcome,
-        message: result.message,
-        assetId: result.assetId,
-        raw,
-      });
-      rows.push(importRow);
-      counts[countKey[result.outcome]] += 1;
-      if (result.createdAsset !== null) {
-        createdAssets.push(result.createdAsset);
-      }
-
-      if (result.collision !== null && commit) {
-        const assetIds = result.collision.match.assets.map((a) => a.id);
-        const signature = collisionSignature(result.collision.plan, assetIds);
-        if (!openSignatures.has(signature)) {
-          openSignatures.add(signature);
-          const exception = await store.createException({
-            kind: "import_identity_collision",
-            assetId: assetIds[0] ?? null,
-            importRowId: importRow.id,
-            details: {
-              signature,
-              jobId: job.id,
-              rowNumber,
-              ...result.collision.match.details,
-            },
-          });
-          exceptions.push(exception);
-          // Audited immediately for the same reason as asset.create in
-          // processRow: a later abort must not orphan this mutation.
-          await store.appendAudit({
-            action: "exception.create",
-            actorUserId: input.actor.actorUserId,
-            actorEmail: input.actor.actorEmail,
-            entityType: "exception",
-            entityId: exception.id,
-            details: {
-              before: null,
-              after: {
-                kind: exception.kind,
-                status: exception.status,
-                assetId: exception.assetId,
-                importRowId: exception.importRowId,
+      const committed = await store.transaction(async (tx) => {
+        const result = await processRow(
+          tx,
+          record.cells,
+          headers,
+          locations,
+          claims,
+          rowNumber,
+          commit,
+          { jobId: job.id, actor: input.actor, ip: input.ip },
+        );
+        const importRow = await tx.appendImportRow({
+          jobId: job.id,
+          rowNumber,
+          outcome: result.outcome,
+          message: result.message,
+          assetId: result.assetId,
+          raw,
+        });
+        let exception: ExceptionRecord | null = null;
+        if (result.collision !== null && commit) {
+          const assetIds = result.collision.match.assets.map((a) => a.id);
+          const signature = collisionSignature(result.collision.plan, assetIds);
+          // Read under the shared mutation lock, so concurrent commits cannot
+          // create duplicate open exceptions for the same identity conflict.
+          const signatures = await loadOpenCollisionSignatures(tx);
+          if (!signatures.has(signature)) {
+            exception = await tx.createException({
+              kind: "import_identity_collision",
+              assetId: assetIds[0] ?? null,
+              importRowId: importRow.id,
+              details: {
+                signature,
+                jobId: job.id,
+                rowNumber,
+                ...result.collision.match.details,
               },
-              importJobId: job.id,
-            },
-            ip: input.ip,
-          });
+            });
+            await tx.appendAudit({
+              action: "exception.create",
+              actorUserId: input.actor.actorUserId,
+              actorEmail: input.actor.actorEmail,
+              entityType: "exception",
+              entityId: exception.id,
+              details: {
+                before: null,
+                after: {
+                  kind: exception.kind,
+                  status: exception.status,
+                  assetId: exception.assetId,
+                  importRowId: exception.importRowId,
+                },
+                importJobId: job.id,
+              },
+              ip: input.ip,
+            });
+          }
         }
-      }
+        const nextCounts = { ...counts };
+        nextCounts[countKey[result.outcome]] += 1;
+        const updated = await tx.completeImportJob(job.id, progress("running", nextCounts));
+        if (updated === null) throw new Error("Import job disappeared during row processing");
+        await tx.appendAudit(audit("import.progress", job.id, {
+          before: progress("running"),
+          after: { job: progress("running", nextCounts), row: importRow },
+          rowId: importRow.id,
+          rowNumber,
+          outcome: result.outcome,
+          ...progress("running", nextCounts),
+        }));
+        return { result, importRow, exception, nextCounts };
+      });
+      rows.push(committed.importRow);
+      counts = committed.nextCounts;
+      if (committed.result.createdAsset !== null) createdAssets.push(committed.result.createdAsset);
+      if (committed.exception !== null) exceptions.push(committed.exception);
     }
+
+    const completed = await store.transaction(async (tx) => {
+      const finished = await tx.completeImportJob(job.id, progress("completed"));
+      if (finished === null) throw new Error("Import job disappeared during completion");
+      await tx.appendAudit(audit(commit ? "import.commit" : "import.dry_run", job.id, {
+        before: progress("running"),
+        after: progress("completed"),
+        filename: finished.filename,
+        fileHash: finished.fileHash,
+        ...progress("completed"),
+        priorImportJobId: priorImport?.id ?? null,
+      }));
+      return finished;
+    });
+    return { ok: true, job: completed, rows, priorImport, createdAssets, exceptions };
   } catch (err) {
-    // The rows processed so far are already persisted (and already
-    // audited, entry by entry); mark the job failed with honest partial
-    // counts and let the API surface the 500.
+    // Counters only advance after a row transaction commits. If cleanup also
+    // fails, the previously committed running state still records honest
+    // progress and the original failure remains the one reported to callers.
     try {
-      await store.completeImportJob(job.id, {
-        status: "failed",
-        totalRows: dataRecords.length,
-        createdCount: counts.created,
-        skippedCount: counts.skipped,
-        collisionCount: counts.collision,
-        errorCount: counts.error,
+      await store.transaction(async (tx) => {
+        const failed = await tx.completeImportJob(job.id, progress("failed"));
+        if (failed === null) throw new Error("Import job disappeared during failure cleanup");
+        await tx.appendAudit(audit("import.failed", job.id, {
+          before: progress("running"),
+          after: progress("failed"),
+          ...progress("failed"),
+        }));
       });
     } catch {
-      // A dead DB here must not replace the original error.
+      // A dead database or audit store must not replace the original error.
     }
     throw err;
   }
-
-  const completed = await store.completeImportJob(job.id, {
-    status: "completed",
-    totalRows: dataRecords.length,
-    createdCount: counts.created,
-    skippedCount: counts.skipped,
-    collisionCount: counts.collision,
-    errorCount: counts.error,
-  });
-
-  return {
-    ok: true,
-    job: completed ?? job,
-    rows,
-    priorImport,
-    createdAssets,
-    exceptions,
-  };
 }

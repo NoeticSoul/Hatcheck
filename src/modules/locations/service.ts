@@ -160,6 +160,13 @@ export async function createLocation(
   store: Store,
   input: CreateLocationInput,
 ): Promise<CreateLocationResult> {
+  return store.transaction((tx) => createLocationInTransaction(tx, input));
+}
+
+async function createLocationInTransaction(
+  store: Store,
+  input: CreateLocationInput,
+): Promise<CreateLocationResult> {
   const name = input.name.trim();
   if (name === "") {
     return fail(400, "validation_error", "name must not be empty");
@@ -179,13 +186,13 @@ export async function createLocation(
   }
 
   try {
-    const location = await store.createLocation({
+    const location = await store.transaction((tx) => tx.createLocation({
       name,
       kind,
       parentId,
       description: input.description ?? null,
       isActive: input.isActive ?? true,
-    });
+    }));
     return { ok: true, location };
   } catch (err) {
     if (isUniqueViolation(err)) {
@@ -212,6 +219,14 @@ export type UpdateLocationResult =
   | LocationFailure<400 | 404 | 409>;
 
 export async function updateLocation(
+  store: Store,
+  id: string,
+  input: UpdateLocationInput,
+): Promise<UpdateLocationResult> {
+  return store.transaction((tx) => updateLocationInTransaction(tx, id, input));
+}
+
+async function updateLocationInTransaction(
   store: Store,
   id: string,
   input: UpdateLocationInput,
@@ -287,7 +302,7 @@ export async function updateLocation(
   }
 
   try {
-    const updated = await store.updateLocation(id, patch);
+    const updated = await store.transaction((tx) => tx.updateLocation(id, patch));
     if (updated === null) {
       return fail(404, "not_found", "Location not found");
     }
@@ -312,6 +327,13 @@ export async function deleteLocation(
   store: Store,
   id: string,
 ): Promise<DeleteLocationResult> {
+  return store.transaction((tx) => deleteLocationInTransaction(tx, id));
+}
+
+async function deleteLocationInTransaction(
+  store: Store,
+  id: string,
+): Promise<DeleteLocationResult> {
   const existing = await store.getLocationById(id);
   if (existing === null) {
     return fail(404, "not_found", "Location not found");
@@ -333,7 +355,7 @@ export async function deleteLocation(
     );
   }
   try {
-    const deleted = await store.deleteLocation(id);
+    const deleted = await store.transaction((tx) => tx.deleteLocation(id));
     if (!deleted) {
       return fail(404, "not_found", "Location not found");
     }

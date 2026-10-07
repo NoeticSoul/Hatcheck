@@ -7,7 +7,7 @@ import {
   useState,
   type FormEvent,
 } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Download, Plus, Search } from "lucide-react";
 import {
   api,
@@ -60,12 +60,18 @@ export function useLocations(): {
   locations: ApiLocation[];
   byId: Map<string, ApiLocation>;
   reload: () => void;
+  loading: boolean;
+  error: string | null;
 } {
   const [locations, setLocations] = useState<ApiLocation[]>([]);
   const [nonce, setNonce] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
+    setError(null);
     (async () => {
       // Page through the server list; the 200-per-request cap is the
       // API's, not a UI guess.
@@ -80,7 +86,7 @@ export function useLocations(): {
         if (all.length >= page.total || page.items.length === 0) break;
       }
       if (!cancelled) setLocations(all);
-    })().catch(() => {});
+    })().catch(() => { if (!cancelled) setError("Could not load locations. Retry before choosing a location."); }).finally(() => { if (!cancelled) setLoading(false); });
     return () => {
       cancelled = true;
     };
@@ -90,6 +96,8 @@ export function useLocations(): {
     locations,
     byId: new Map(locations.map((l) => [l.id, l])),
     reload: useCallback(() => setNonce((n) => n + 1), []),
+    loading,
+    error,
   };
 }
 
@@ -125,12 +133,14 @@ export function AssetFormFields({
   locations,
   byId,
   statusEditable,
+  locationsUnavailable = false,
 }: {
   values: AssetFormValues;
   onChange: (values: AssetFormValues) => void;
   locations: ApiLocation[];
   byId: Map<string, ApiLocation>;
   statusEditable: boolean;
+  locationsUnavailable?: boolean;
 }) {
   const set = <K extends keyof AssetFormValues>(
     key: K,
@@ -190,6 +200,7 @@ export function AssetFormFields({
         <Label htmlFor="asset-location">Location</Label>
         <Select
           id="asset-location"
+          disabled={locationsUnavailable}
           value={values.locationId}
           onChange={(e) => set("locationId", e.target.value)}
           className="mt-1.5"
@@ -284,25 +295,41 @@ export function toNull(value: string): string | null {
 export function AssetsPage() {
   const user = useCurrentUser();
   const navigate = useNavigate();
-  const { locations, byId } = useLocations();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { locations, byId, loading: locationsLoading, error: locationsError, reload: reloadLocations } = useLocations();
 
   const [items, setItems] = useState<ApiAssetListItem[] | null>(null);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
-  const [search, setSearch] = useState("");
-  const [q, setQ] = useState("");
-  const [status, setStatus] = useState<AssetStatus | "">("");
-  const [assetType, setAssetType] = useState<AssetType | "">("");
+  const q = searchParams.get("q") ?? "";
+  const requestedStatus = searchParams.get("status");
+  const status = requestedStatus !== null && Object.hasOwn(STATUS_LABELS, requestedStatus) ? requestedStatus as AssetStatus : "";
+  const requestedType = searchParams.get("assetType");
+  const assetType = requestedType !== null && Object.hasOwn(TYPE_LABELS, requestedType) ? requestedType as AssetType : "";
+  const [search, setSearch] = useState(q);
   const [error, setError] = useState<string | null>(null);
+  const [nonce, setNonce] = useState(0);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState<AssetFormValues>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  useEffect(() => { setSearch(q); }, [q]);
+
+  function changeFilter(key: string, value: string) {
+    setOffset(0);
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      if (value === "") next.delete(key); else next.set(key, value);
+      return next;
+    }, { replace: true });
+  }
+
   useEffect(() => {
     let cancelled = false;
     setError(null);
+    setItems(null);
     api
       .listAssets({
         limit: PAGE_SIZE,
@@ -325,16 +352,16 @@ export function AssetsPage() {
     return () => {
       cancelled = true;
     };
-  }, [offset, q, status, assetType]);
+  }, [offset, q, status, assetType, nonce]);
 
   function submitSearch(event: FormEvent) {
     event.preventDefault();
-    setOffset(0);
-    setQ(search.trim());
+    changeFilter("q", search.trim());
   }
 
   async function submitCreate(event: FormEvent) {
     event.preventDefault();
+    if (saving) return;
     setSaving(true);
     setFormError(null);
     try {
@@ -402,8 +429,7 @@ export function AssetsPage() {
         <Select
           value={status}
           onChange={(e) => {
-            setOffset(0);
-            setStatus(e.target.value as AssetStatus | "");
+            changeFilter("status", e.target.value);
           }}
           aria-label="Filter by status"
           className="w-40"
@@ -418,8 +444,7 @@ export function AssetsPage() {
         <Select
           value={assetType}
           onChange={(e) => {
-            setOffset(0);
-            setAssetType(e.target.value as AssetType | "");
+            changeFilter("assetType", e.target.value);
           }}
           aria-label="Filter by type"
           className="w-40"
@@ -456,7 +481,7 @@ export function AssetsPage() {
       </form>
 
       {error !== null && (
-        <p className="mt-4 text-sm text-destructive">{error}</p>
+        <div role="alert" className="mt-4 flex flex-wrap items-center gap-2"><p className="text-sm text-destructive">{error}</p><Button variant="outline" size="sm" onClick={() => setNonce((n) => n + 1)}>Retry assets</Button></div>
       )}
 
       <div className="mt-4 rounded-xl border border-border bg-card px-4">
@@ -476,7 +501,7 @@ export function AssetsPage() {
             {items === null ? (
               <TableRow>
                 <TableCell colSpan={7} className="text-muted-foreground">
-                  Loading...
+                  {error ? "Assets unavailable." : "Loading..."}
                 </TableCell>
               </TableRow>
             ) : items.length === 0 ? (
@@ -541,19 +566,23 @@ export function AssetsPage() {
 
       <Dialog
         open={createOpen}
-        onClose={() => setCreateOpen(false)}
+        onClose={() => { if (!saving) setCreateOpen(false); }}
         title="New asset"
         description="Deployed status always comes from a check-out, never from this form."
         className="max-w-2xl"
       >
         <form onSubmit={submitCreate}>
+          {locationsError && <div role="alert" className="mb-3"><p className="text-sm text-destructive">{locationsError}</p><Button type="button" variant="outline" size="sm" onClick={reloadLocations}>Retry locations</Button></div>}
+          <fieldset disabled={saving}>
           <AssetFormFields
             values={form}
             onChange={setForm}
             locations={locations}
             byId={byId}
             statusEditable
+            locationsUnavailable={locationsLoading || locationsError !== null}
           />
+          </fieldset>
           {formError !== null && (
             <p className="mt-3 text-sm text-destructive">{formError}</p>
           )}
@@ -561,6 +590,7 @@ export function AssetsPage() {
             <Button
               type="button"
               variant="outline"
+              disabled={saving}
               onClick={() => setCreateOpen(false)}
             >
               Cancel

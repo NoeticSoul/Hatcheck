@@ -14,3 +14,14 @@ coverage/
 playwright-report/
 test-results/
 .claude/
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfplan
+**/*.tfvars
+**/*.tfvars.json
+packaging/windows/**/bin/
+packaging/windows/**/obj/
+**/__pycache__/
+**/*.py[cod]
+infra/aws/.migration-receipt.json

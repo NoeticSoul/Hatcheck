@@ -1,5 +1,5 @@
 # Hatcheck server mode: app + PostgreSQL.
-# Usage: cp .env.example .env, set POSTGRES_PASSWORD, then
+# Usage: cp .env.example .env, set the three POSTGRES_*_PASSWORD variables, then
 #   docker compose up --build
 # No credentials are hardcoded here; compose reads them from .env and fails
 # fast when POSTGRES_PASSWORD is missing (security invariant: env-only
@@ -13,28 +13,71 @@ services:
     # Operator settings (OIDC_*, SESSION_TTL_HOURS, HATCHECK_TRUST_PROXY,
     # HATCHECK_SEED_ADMIN_PASSWORD, ...) flow in from .env; the environment
     # block below still wins for the server-mode essentials it pins.
-    env_file: .env
+    env_file: ${HATCHECK_ENV_FILE:-.env}
     environment:
       NODE_ENV: production
       PORT: "3000"
       APP_URL: ${APP_URL:-http://localhost:3000}
       HATCHECK_DB: postgres
-      DATABASE_URL: postgres://hatcheck:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/hatcheck
+      DATABASE_URL: ""
+      PGHOST: db
+      PGPORT: "5432"
+      PGDATABASE: ${HATCHECK_PG_DATABASE:-hatcheck}
+      PGUSER: hatcheck_app
+      PGPASSWORD: ${POSTGRES_APP_PASSWORD:?set POSTGRES_APP_PASSWORD in .env}
+      POSTGRES_PASSWORD: ""
+      POSTGRES_OWNER_PASSWORD: ""
+      POSTGRES_APP_PASSWORD: ""
+      HATCHECK_SEED_ADMIN_PASSWORD: ""
+      HATCHECK_SKIP_MIGRATIONS: "true"
+      HATCHECK_SKIP_BOOTSTRAP: "true"
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    stop_grace_period: 25s
     restart: unless-stopped
+
+  migrate:
+    build: .
+    env_file: ${HATCHECK_ENV_FILE:-.env}
+    environment:
+      NODE_ENV: production
+      HATCHECK_DB: postgres
+      DATABASE_URL: ""
+      PGHOST: db
+      PGPORT: "5432"
+      PGDATABASE: ${HATCHECK_PG_DATABASE:-hatcheck}
+      PGUSER: hatcheck_owner
+      PGPASSWORD: ${POSTGRES_OWNER_PASSWORD:?set POSTGRES_OWNER_PASSWORD in .env}
+      POSTGRES_PASSWORD: ""
+      POSTGRES_OWNER_PASSWORD: ""
+      POSTGRES_APP_PASSWORD: ""
+      POSTGRES_RUNTIME_ROLE: hatcheck_app
+      HATCHECK_SKIP_MIGRATIONS: "false"
+      HATCHECK_SKIP_BOOTSTRAP: "false"
+    command: ["bun", "scripts/migrate.ts"]
+    healthcheck:
+      disable: true
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
 
   db:
     image: postgres:17
     environment:
-      POSTGRES_USER: hatcheck
+      POSTGRES_USER: postgres
       POSTGRES_DB: hatcheck
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_OWNER_PASSWORD: ${POSTGRES_OWNER_PASSWORD:?set POSTGRES_OWNER_PASSWORD in .env}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?set POSTGRES_APP_PASSWORD in .env}
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./scripts/pg-init.sh:/docker-entrypoint-initdb.d/10-hatcheck.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U hatcheck -d hatcheck"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d hatcheck"]
       interval: 5s
       timeout: 5s
       retries: 10

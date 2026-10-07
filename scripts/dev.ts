@@ -3,18 +3,12 @@
 // non-zero if either child dies. Uses only node:child_process so it runs
 // under both Bun and Node (CLAUDE.md: no Bun-only APIs).
 //
-// shell: true is required so the npm-style launcher shims (bun.cmd /
-// bunx.cmd) resolve on Windows; on POSIX it just runs through /bin/sh.
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { spawnDevProcess, stopDevProcesses, type DevProcessSpec } from "../src/server/dev-process";
 
-interface ProcSpec {
-  name: string;
-  command: string;
-}
-
-const specs: ProcSpec[] = [
-  { name: "api", command: "bun --watch src/server/index.ts" },
-  { name: "web", command: "bunx vite src/web" },
+const specs: DevProcessSpec[] = [
+  { name: "api", command: "bun", args: ["--watch", "src/server/index.ts"] },
+  { name: "web", command: "bunx", args: ["vite", "src/web"] },
 ];
 
 const children: ChildProcess[] = [];
@@ -39,33 +33,20 @@ function prefixLines(
   });
 }
 
-function killTree(child: ChildProcess): void {
-  if (child.pid === undefined || child.exitCode !== null) return;
-  if (process.platform === "win32") {
-    // child.kill() would only hit the cmd.exe wrapper; taskkill /T takes the
-    // whole tree (bun/vite grandchildren) down with it.
-    spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
-      stdio: "ignore",
-    });
-  } else {
-    child.kill("SIGTERM");
-  }
-}
-
 function shutdown(code: number): void {
   if (shuttingDown) return;
   shuttingDown = true;
-  for (const child of children) killTree(child);
-  // Give the kills a moment to land before exiting ourselves.
-  setTimeout(() => process.exit(code), 300);
+  stopDevProcesses(children).then(
+    () => process.exit(code),
+    (error: unknown) => {
+      process.stderr.write(`[dev] cleanup failed: ${String(error)}\n`);
+      process.exit(1);
+    },
+  );
 }
 
 for (const spec of specs) {
-  const child = spawn(spec.command, {
-    shell: true,
-    stdio: ["ignore", "pipe", "pipe"],
-    env: process.env,
-  });
+  const child = spawnDevProcess(spec);
   children.push(child);
   prefixLines(spec.name, child.stdout, process.stdout);
   prefixLines(spec.name, child.stderr, process.stderr);

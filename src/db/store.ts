@@ -3,6 +3,7 @@
 // the dual-DB invariant enforceable: both store.sqlite.ts and store.pg.ts
 // must satisfy this exact contract or the build fails.
 import type { DbKind } from "../config";
+import type { DocumentsStore } from "./documents.types";
 
 export type Role = "admin" | "technician" | "readonly";
 export type AuthSource = "local" | "oidc";
@@ -15,6 +16,7 @@ export interface UserRecord {
   authSource: AuthSource;
   passwordHash: string | null;
   oidcSubject: string | null;
+  oidcIssuer: string | null;
   isActive: boolean;
   createdAt: number;
   updatedAt: number;
@@ -27,6 +29,7 @@ export interface NewUser {
   authSource: AuthSource;
   passwordHash?: string | null;
   oidcSubject?: string | null;
+  oidcIssuer?: string | null;
   isActive?: boolean;
 }
 
@@ -199,8 +202,8 @@ export interface AssetQuery {
    */
   q?: string;
   /**
-   * Only assets whose CURRENT custody event — the latest by (at desc,
-   * id desc) — is a check_out held by this user. Derived from the event
+   * Only assets whose CURRENT custody event (highest per-asset sequence)
+   * is a check_out held by this user. Derived from the event
    * stream via the same portable correlated-subquery style as
    * getCurrentCustodyForAssets; past holders and checked-in assets never
    * match.
@@ -231,6 +234,8 @@ export type CustodyType = "check_out" | "check_in";
 
 export interface CustodyEventRecord {
   id: string;
+  /** Monotonic per asset; authoritative order independent of clocks/IDs. */
+  sequence: number;
   assetId: string;
   at: number;
   type: CustodyType;
@@ -311,7 +316,7 @@ export interface NewImportJob {
 }
 
 export interface ImportJobCompletion {
-  status: "completed" | "failed";
+  status: ImportStatus;
   totalRows: number;
   createdCount: number;
   skippedCount: number;
@@ -369,8 +374,12 @@ export interface ExceptionResolution {
   resolutionNote?: string | null;
 }
 
-export interface Store {
+export interface Store extends DocumentsStore {
   readonly kind: DbKind;
+  /** Atomic asynchronous unit; nested units use savepoints. Use the supplied store. */
+  transaction<T>(work: (tx: Store) => Promise<T>): Promise<T>;
+  /** Probe the actual database connection. */
+  readiness(): Promise<void>;
   /** Apply pending migrations for this engine. */
   migrate(): Promise<void>;
   close(): Promise<void>;
@@ -379,7 +388,7 @@ export interface Store {
   createUser(user: NewUser): Promise<UserRecord>;
   getUserById(id: string): Promise<UserRecord | null>;
   getUserByEmail(email: string): Promise<UserRecord | null>;
-  getUserByOidcSubject(subject: string): Promise<UserRecord | null>;
+  getUserByOidcSubject(subject: string, issuer?: string): Promise<UserRecord | null>;
   listUsers(): Promise<UserRecord[]>;
   updateUser(id: string, patch: UserPatch): Promise<UserRecord | null>;
   countUsers(): Promise<number>;
@@ -465,8 +474,7 @@ export interface Store {
    * inside that transaction (a check_out on a held asset or a check_in on
    * an idle one returns a conflict instead of writing). The PostgreSQL
    * implementation locks the asset row (SELECT ... FOR UPDATE) so
-   * concurrent appends for one asset serialize; SQLite's single
-   * synchronous connection serializes them inherently. When
+   * concurrent appends for one asset serialize; SQLite uses an exclusive connection gate and an immediate transaction. When
    * newAssetLocationId is not undefined, assets.location_id (and
    * updatedAt) is set inside that same transaction — a conflicting append
    * therefore leaves status AND location untouched. When requireStatus is
@@ -487,6 +495,8 @@ export interface Store {
     opts: { limit: number; offset?: number },
   ): Promise<CustodyEventRecord[]>;
   countCustodyEvents(assetId: string): Promise<number>;
+  /** Recent activity across assets; display order only, never custody authority. */
+  listRecentCustodyEvents(limit: number): Promise<CustodyEventRecord[]>;
   /** Latest check_out with no later check_in, else null. Derived, never stored. */
   getCurrentCustody(assetId: string): Promise<CustodyEventRecord | null>;
   /** Batch form for list views: one event per currently-held asset. */
@@ -556,6 +566,7 @@ export function buildUserRow(user: NewUser): UserRecord {
     authSource: user.authSource,
     passwordHash: user.passwordHash ?? null,
     oidcSubject: user.oidcSubject ?? null,
+    oidcIssuer: user.oidcIssuer ?? null,
     isActive: user.isActive ?? true,
     createdAt: now,
     updatedAt: now,

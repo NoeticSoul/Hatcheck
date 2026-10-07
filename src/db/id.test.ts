@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { timeOrderedId } from "./id";
 
 describe("timeOrderedId", () => {
@@ -36,6 +36,23 @@ describe("timeOrderedId", () => {
     for (const id of ids) {
       expect(id > prev).toBe(true);
       prev = id;
+    }
+  });
+  it("remains ordered through clock rollback and a full same-millisecond counter", async () => {
+    vi.resetModules();
+    const { timeOrderedId: freshId } = await import("./id");
+    const now = vi.spyOn(Date, "now");
+    try {
+      now.mockReturnValue(1800000000000);
+      let previous = freshId();
+      now.mockReturnValue(1700000000000);
+      for (let i = 0; i < 65540; i++) {
+        const next = freshId();
+        expect(next > previous).toBe(true);
+        previous = next;
+      }
+    } finally {
+      now.mockRestore();
     }
   });
 });

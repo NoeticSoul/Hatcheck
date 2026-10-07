@@ -1,19 +1,20 @@
 // Time-ordered ids for append-only event tables (custody events, import
-// rows). Lexicographic order == chronological order, with a per-process
-// counter breaking same-millisecond ties, so `ORDER BY (at, id)` is total
-// and portable without relying on engine-specific autoincrement semantics.
-// Across processes (multi-replica PG) same-millisecond ordering between
-// writers is arbitrary but stable, which is acceptable for history views.
+// rows). IDs increase within one process, including clock rollback and
+// same-millisecond bursts. They are identifiers and display tie-breakers:
+// cross-process causal ordering must use the persisted custody sequence.
 
 let lastMs = 0;
 let seq = 0;
 
 export function timeOrderedId(): string {
-  const now = Date.now();
+  let now = Math.max(Date.now(), lastMs);
   if (now === lastMs) {
-    // 16 bits of tie-breaker; wrapping within one millisecond would need
-    // >65k events/ms from one process, far beyond any realistic burst.
-    seq = (seq + 1) & 0xffff;
+    seq += 1;
+    if (seq > 0xffff) {
+      now += 1;
+      lastMs = now;
+      seq = 0;
+    }
   } else {
     lastMs = now;
     seq = 0;

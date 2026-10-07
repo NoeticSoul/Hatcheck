@@ -1,7 +1,6 @@
-// Standalone-build manifest. scripts/compile.ts temporarily OVERWRITES
-// this module with generated `with { type: "file" }` imports (which
-// bun build --compile embeds into the binary) and restores this stub
-// afterwards — the committed file is always this empty version. Empty
+// Standalone-build manifest. scripts/compile.ts generates embedded-file
+// imports in an isolated source copy; this module stays empty in the checkout.
+// The generated imports are embedded by bun build --compile. Empty
 // maps mean "not a standalone build": index.ts then serves dist/web from
 // disk and reads migrations from the source tree as usual.
 

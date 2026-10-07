@@ -12,6 +12,19 @@ criteria are verified by automated tests and by green CI on both database
 engines. Do not build ahead of Phase 2 gate criteria. Update this section
 as phases close.
 
+2026-10-06 implementation update: accountability stabilization, pilot
+administration/recovery, and the structured Doc Studio/KB workflow are
+implemented. Local validation is recorded in docs/VALIDATION.md. Phase 2
+remains open pending the team's human DOCX standards review; later workflows
+remain deferred.
+
+2026-10-07 user-authorized exception: prepare Windows MSI delivery and an
+AWS-hosted server/RDS deployment so workstations can launch the shared HTTPS
+app without running a local server. This narrow packaging/hosting exception
+does not close Phase 2 or open imaging, connectors, reporting or AI work.
+Unsigned pilot artifacts and deployment configuration may be prepared;
+release publication, signing and live cloud provisioning are separate actions.
+
 ### Phase 1 gate record (closed)
 
 1. 500 synthetic assets imported via CSV in one run with a per-row result

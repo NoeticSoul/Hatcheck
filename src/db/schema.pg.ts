@@ -22,11 +22,13 @@ export const users = pgTable(
     role: text("role", { enum: ["admin", "technician", "readonly"] }).notNull(),
     authSource: text("auth_source", { enum: ["local", "oidc"] }).notNull(),
     passwordHash: text("password_hash"),
-    oidcSubject: text("oidc_subject").unique(),
+    oidcSubject: text("oidc_subject"),
+    oidcIssuer: text("oidc_issuer"),
     isActive: boolean("is_active").notNull().default(true),
     createdAt: bigint("created_at", { mode: "number" }).notNull(),
     updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
   },
+  (t) => [uniqueIndex("users_oidc_identity_uq").on(t.oidcIssuer, t.oidcSubject)],
 );
 
 export const sessions = pgTable(
@@ -168,6 +170,7 @@ export const custodyEvents = pgTable(
     assetId: text("asset_id")
       .notNull()
       .references(() => assets.id, { onDelete: "cascade" }),
+    sequence: bigint("sequence", { mode: "number" }).notNull(),
     at: bigint("at", { mode: "number" }).notNull(),
     type: text("type", { enum: ["check_out", "check_in"] }).notNull(),
     holderUserId: text("holder_user_id"),
@@ -178,7 +181,10 @@ export const custodyEvents = pgTable(
     actorUserId: text("actor_user_id"),
     actorEmail: text("actor_email"),
   },
-  (t) => [index("custody_events_asset_at_idx").on(t.assetId, t.at)],
+  (t) => [
+    index("custody_events_asset_at_idx").on(t.assetId, t.at),
+    uniqueIndex("custody_events_asset_sequence_uq").on(t.assetId, t.sequence),
+  ],
 );
 
 export const importJobs = pgTable(
@@ -248,3 +254,11 @@ export const exceptionRecords = pgTable(
     index("exception_records_at_idx").on(t.at),
   ],
 );
+
+// Every application mutation transaction locks this row before prechecks.
+export const mutationLocks = pgTable("mutation_locks", {
+  key: text("key").primaryKey(),
+  value: bigint("value", { mode: "number" }).notNull().default(0),
+});
+
+export * from "./schema.documents.pg";

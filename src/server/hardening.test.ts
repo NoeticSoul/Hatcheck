@@ -4,7 +4,7 @@ import { hash } from "@node-rs/argon2";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../config";
 import type { Role, Store } from "../db/store";
-import { createSqliteStore } from "../db/store.sqlite";
+import { createTestStore as createSqliteStore } from "../test/store";
 import { createApp } from "./app";
 
 const TEST_PASSWORD = "correct-horse-battery-staple";
@@ -85,7 +85,7 @@ describe("rate limiting vs X-Forwarded-For", () => {
   });
 
   it("with HATCHECK_TRUST_PROXY=true keys on the proxy-appended last hop, not client-prepended ones", async () => {
-    const { app, store } = await makeApp({ HATCHECK_TRUST_PROXY: "true" });
+    const { app, store } = await makeApp({ HATCHECK_TRUST_PROXY: "true", HATCHECK_TRUSTED_PROXIES: "127.0.0.1" });
     await seedUser(store, "victim@hatcheck.test", "admin");
 
     // The client varies the first (forgeable) hop, but the trusted proxy
@@ -96,6 +96,7 @@ describe("rate limiting vs X-Forwarded-For", () => {
         ...loginRequest("victim@hatcheck.test", "wrong-password", {
           "x-forwarded-for": `203.0.113.${i}, 198.51.100.7`,
         }),
+        { remoteAddr: "127.0.0.1" },
       );
       if (res.status === 429) {
         limited = true;

@@ -18,6 +18,11 @@ import {
 
 const PAGE_SIZE = 50;
 
+function formatDetails(value: string): string {
+  try { return JSON.stringify(JSON.parse(value), null, 2); }
+  catch { return value; }
+}
+
 export function AuditPage() {
   const [entries, setEntries] = useState<AuditEntry[] | null>(null);
   const [total, setTotal] = useState(0);
@@ -25,10 +30,12 @@ export function AuditPage() {
   const [filterInput, setFilterInput] = useState("");
   const [action, setAction] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [nonce, setNonce] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     setError(null);
+    setEntries(null);
     api
       .listAudit(PAGE_SIZE, offset, action === "" ? undefined : action)
       .then((res) => {
@@ -47,7 +54,7 @@ export function AuditPage() {
     return () => {
       cancelled = true;
     };
-  }, [offset, action]);
+  }, [offset, action, nonce]);
 
   function submitFilter(event: FormEvent) {
     event.preventDefault();
@@ -79,7 +86,7 @@ export function AuditPage() {
       </form>
 
       {error !== null && (
-        <p className="mt-4 text-sm text-destructive">{error}</p>
+        <div role="alert" className="mt-4 flex flex-wrap items-center gap-2"><p className="text-sm text-destructive">{error}</p><Button variant="outline" size="sm" onClick={() => setNonce((n) => n + 1)}>Retry audit log</Button></div>
       )}
 
       <div className="mt-4 rounded-xl border border-border bg-card px-4">
@@ -97,7 +104,7 @@ export function AuditPage() {
             {entries === null ? (
               <TableRow>
                 <TableCell colSpan={5} className="text-muted-foreground">
-                  Loading...
+                  {error ? "Audit log unavailable." : "Loading..."}
                 </TableCell>
               </TableRow>
             ) : entries.length === 0 ? (
@@ -128,11 +135,7 @@ export function AuditPage() {
                           view
                         </summary>
                         <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 text-xs">
-                          {JSON.stringify(
-                            JSON.parse(entry.details),
-                            null,
-                            2,
-                          )}
+                          {formatDetails(entry.details)}
                         </pre>
                       </details>
                     )}

@@ -343,6 +343,7 @@ export type DeleteAssetResult =
       before: AssetRecord;
       interfaces: AssetInterfaceRecord[];
       custodyEventCount: number;
+      custodyEvents: CustodyEventRecord[];
     }
   | LocationFailure<404>;
 
@@ -355,17 +356,31 @@ export async function deleteAsset(
   store: Store,
   id: string,
 ): Promise<DeleteAssetResult> {
+  return store.transaction((tx) => deleteAssetInTransaction(tx, id));
+}
+
+async function deleteAssetInTransaction(
+  store: Store,
+  id: string,
+): Promise<DeleteAssetResult> {
   const existing = await store.getAssetById(id);
   if (existing === null) {
     return fail(404, "not_found", "Asset not found");
   }
   const interfaces = await store.listAssetInterfaces(id);
-  const custodyEventCount = await store.countCustodyEvents(id);
+  const custodyEvents: CustodyEventRecord[] = [];
+  const pageSize = 500;
+  for (let offset = 0; ; offset += pageSize) {
+    const page = await store.listCustodyEvents(id, { limit: pageSize, offset });
+    custodyEvents.push(...page);
+    if (page.length < pageSize) break;
+  }
+  const custodyEventCount = custodyEvents.length;
   const deleted = await store.deleteAsset(id);
   if (!deleted) {
     return fail(404, "not_found", "Asset not found");
   }
-  return { ok: true, before: existing, interfaces, custodyEventCount };
+  return { ok: true, before: existing, interfaces, custodyEventCount, custodyEvents };
 }
 
 export interface ListAssetsInput {
@@ -451,6 +466,13 @@ export async function exportAssetsCsv(
   store: Store,
   filters: Omit<AssetQuery, "limit" | "offset">,
 ): Promise<ExportAssetsResult> {
+  return store.transaction((tx) => exportAssetsCsvInTransaction(tx, filters));
+}
+
+async function exportAssetsCsvInTransaction(
+  store: Store,
+  filters: Omit<AssetQuery, "limit" | "offset">,
+): Promise<ExportAssetsResult> {
   const total = await store.countAssets(filters);
   if (total > EXPORT_ROW_CAP) {
     return fail(
@@ -492,6 +514,11 @@ export async function exportAssetsCsv(
       offset,
     });
     if (page.length === 0) break;
+    // Enforce the cap while accumulating too: a bad count or a store wrapper
+    // must never turn a bounded report into an unbounded allocation.
+    if (rows.length - 1 + page.length > EXPORT_ROW_CAP) {
+      return fail(400, "too_many_rows", `export exceeds the ${EXPORT_ROW_CAP} limit; narrow the filters`);
+    }
     const ids = page.map((asset) => asset.id);
     const custody = await store.getCurrentCustodyForAssets(ids);
     const holderByAsset = new Map(

@@ -324,6 +324,7 @@ export function assetRoutes() {
             label: iface.label,
           })),
           custodyEventCount: result.custodyEventCount,
+          custodyEvents: result.custodyEvents,
         },
         after: null,
       },

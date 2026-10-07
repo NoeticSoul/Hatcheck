@@ -6,7 +6,7 @@
 import { hash } from "@node-rs/argon2";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../config";
-import { createSqliteStore } from "../db/store.sqlite";
+import { createTestStore as createSqliteStore } from "../test/store";
 import type {
   AssetInterfaceRecord,
   AssetRecord,
@@ -709,6 +709,10 @@ describe("asset delete", () => {
       systemUuid: null,
       interfaces: [{ mac: "00:00:5e:00:53:20", label: "onboard" }],
       custodyEventCount: 2,
+      custodyEvents: expect.arrayContaining([
+        expect.objectContaining({ assetId: asset.id, type: "check_out" }),
+        expect.objectContaining({ assetId: asset.id, type: "check_in" }),
+      ]),
     });
   });
 

@@ -1,9 +1,8 @@
 // CSV import API: thin OpenAPI route definitions and handlers. All import
 // rules (header mapping, per-row validation, exception-first identity
 // matching, idempotency) live in src/modules/imports/service.ts; RBAC is
-// enforced here at the API layer. Audit: the service writes one entry per
-// created asset and exception AS each mutation lands (so an aborted run
-// leaves nothing unaudited); this route adds the one run-summary entry.
+// enforced here at the API layer. The service atomically writes all job,
+// row, inventory, and audit changes; the route only serializes the report.
 import { createRoute, z } from "@hono/zod-openapi";
 import { runAssetImport } from "../../modules/imports/service";
 import { clientIp, createRouter, errorBody } from "../context";
@@ -63,6 +62,7 @@ const runImportRoute = createRoute({
     401: jsonContent(ErrorSchema, "Not authenticated"),
     403: jsonContent(ErrorSchema, "Technician or admin role required"),
     413: jsonContent(ErrorSchema, "CSV body too large"),
+    415: jsonContent(ErrorSchema, "Content-Type must be text/csv"),
   },
 });
 
@@ -137,25 +137,6 @@ export function importRoutes() {
     if (!result.ok) {
       return c.json(errorBody(result.code, result.message), result.status);
     }
-
-    await store.appendAudit({
-      action: mode === "commit" ? "import.commit" : "import.dry_run",
-      actorUserId: actor.id,
-      actorEmail: actor.email,
-      entityType: "import",
-      entityId: result.job.id,
-      details: {
-        filename: result.job.filename,
-        fileHash: result.job.fileHash,
-        totalRows: result.job.totalRows,
-        createdCount: result.job.createdCount,
-        skippedCount: result.job.skippedCount,
-        collisionCount: result.job.collisionCount,
-        errorCount: result.job.errorCount,
-        priorImportJobId: result.priorImport?.id ?? null,
-      },
-      ip: clientIp(c),
-    });
 
     return c.json(
       { job: result.job, rows: result.rows, priorImport: result.priorImport },

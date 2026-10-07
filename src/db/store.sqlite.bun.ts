@@ -16,6 +16,7 @@ export function createBunSqliteStore(sqlitePath: string): Store {
   const sqlite = new Database(sqlitePath, { create: true, readwrite: true });
   sqlite.run("PRAGMA journal_mode = WAL;");
   sqlite.run("PRAGMA foreign_keys = ON;");
+  sqlite.run("PRAGMA busy_timeout = 5000;");
   const db = drizzle(sqlite, { schema });
 
   return buildSqliteStore(db, {

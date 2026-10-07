@@ -39,46 +39,56 @@ export interface SeedOptions {
 
 export async function seed(store: Store, opts: SeedOptions = {}): Promise<void> {
   const log = opts.log ?? ((line: string) => console.log(line));
-
   await store.migrate();
-
-  const createdEmails: string[] = [];
-  for (const u of SEED_USERS) {
-    const existing = await store.getUserByEmail(u.email);
-    if (existing !== null) {
-      log(`seed: ${u.email} already exists, skipping`);
-      continue;
+  const messages: string[] = [];
+  await store.transaction(async (store) => {
+    const createdEmails: string[] = [];
+    for (const u of SEED_USERS) {
+      const existing = await store.getUserByEmail(u.email);
+      if (existing !== null) {
+        messages.push(`seed: ${u.email} already exists, skipping`);
+        continue;
+      }
+      const password =
+        u.role === "admin"
+          ? (opts.adminPassword ??
+            process.env.HATCHECK_SEED_ADMIN_PASSWORD ??
+            generatePassword())
+          : generatePassword();
+      const user = await store.createUser({
+        email: u.email,
+        displayName: u.displayName,
+        role: u.role,
+        authSource: "local",
+        passwordHash: await hashPassword(password),
+      });
+      await store.appendAudit({
+        action: "user.create", actorEmail: "system:seed", entityType: "user", entityId: user.id,
+        details: { before: null, after: { email: user.email, displayName: user.displayName, role: user.role, authSource: user.authSource, isActive: user.isActive } },
+      });
+      createdEmails.push(u.email);
+      // The one and only place the plaintext exists: operator handoff.
+      messages.push(`seed: created ${u.email} (${u.role}) password: ${password}`);
     }
-    const password =
-      u.role === "admin"
-        ? (opts.adminPassword ??
-          process.env.HATCHECK_SEED_ADMIN_PASSWORD ??
-          generatePassword())
-        : generatePassword();
-    await store.createUser({
-      email: u.email,
-      displayName: u.displayName,
-      role: u.role,
-      authSource: "local",
-      passwordHash: await hashPassword(password),
+
+    const before = await store.getSetting("instance");
+    const after = { name: "Hatcheck (dev)" };
+    await store.setSetting("instance", after);
+
+    await store.appendAudit({
+      action: "seed.run",
+      entityType: "seed",
+      actorEmail: "system:seed",
+      details: { created: createdEmails, before, after },
     });
-    createdEmails.push(u.email);
-    // The one and only place the plaintext exists: operator handoff.
-    log(`seed: created ${u.email} (${u.role}) password: ${password}`);
-  }
 
-  await store.setSetting("instance", { name: "Hatcheck (dev)" });
-
-  await store.appendAudit({
-    action: "seed.run",
-    entityType: "seed",
-    details: { created: createdEmails },
+    messages.push(
+      `seed: done (${createdEmails.length} user(s) created, ` +
+        `${SEED_USERS.length - createdEmails.length} already present)`,
+    );
   });
-
-  log(
-    `seed: done (${createdEmails.length} user(s) created, ` +
-      `${SEED_USERS.length - createdEmails.length} already present)`,
-  );
+  // Emit operator handoff only after the entire seed has committed.
+  for (const message of messages) log(message);
 }
 
 function isMainModule(): boolean {
@@ -104,7 +114,7 @@ async function main(): Promise<void> {
 
 if (isMainModule()) {
   main().catch((err) => {
-    console.error("seed failed:", err);
+    console.error("seed failed:", err instanceof Error ? err.name : "unknown");
     process.exitCode = 1;
   });
 }

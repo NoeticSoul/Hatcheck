@@ -9,6 +9,12 @@
 | Status | Pre-Gate 0 (IP clearance not yet complete) |
 | License | Apache-2.0 |
 
+Implementation status (2026-10-06): inventory and custody are implemented;
+accountability stabilization and the Phase 2 Doc Studio/KB workflow are in
+validation. Gate 0 naming/IP clearance remains a separate maintainer decision;
+implementation progress does not establish that clearance. Later imaging,
+connector, AI, reporting and public-release workflows remain deferred.
+
 Hatcheck: an open-source, self-hosted IT management platform for small IT
 teams. A hatcheck room takes custody of what you hand it, gives you a numbered
 ticket, and returns it on demand -- which is asset check-in/check-out,
@@ -98,6 +104,12 @@ operators, LISTEN/NOTIFY) in core paths. Retrofitting dual-DB support later
 is a rewrite; enforcing it from Phase 0 is a lint rule.
 
 ### Distribution shapes
+
+User-authorized hosting/delivery exception (2026-10-07): prepare a Windows MSI
+launcher for a centrally hosted AWS server with private RDS PostgreSQL. This
+is organization server mode with a Windows shortcut, without local backend
+processes or database credentials on workstations. It does not advance the
+imaging/connectors/AI roadmap or close the Phase 2 manual export review.
 
 1. **Server mode (canonical for organizations):** Docker Compose (app +
    PostgreSQL). Target: fresh machine to logged-in dashboard in under 10

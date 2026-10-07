@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="Hatcheck Cloud (unsigned pilot)" Manufacturer="Hatcheck contributors"
+           Version="$(var.ProductVersion)" Language="1033" Scope="perMachine"
+           UpgradeCode="84BE9B6F-186E-48F7-8509-3088B6CB61AC" InstallerVersion="500">
+    <SummaryInformation Description="Unsigned pilot HTTPS browser launcher; no local database or server." />
+    <MajorUpgrade Schedule="afterInstallInitialize"
+                  DowngradeErrorMessage="A newer version of Hatcheck Cloud is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <!-- VersionNT64 numeric comparisons misidentify modern Windows versions. -->
+    <Launch Condition="VersionNT64" Message="Hatcheck Cloud requires 64-bit Windows. Supported systems are Windows 10 and Windows 11." />
+
+    <Property Id="HATCHECKSERVERURL" Secure="yes" />
+    <Property Id="EXISTINGSERVERURL">
+      <RegistrySearch Id="FindExistingServerUrl" Root="HKLM" Key="Software\Hatcheck\Cloud"
+                      Name="ServerUrl" Type="raw" Bitness="always64" />
+    </Property>
+    <!-- An explicit MSI property wins, then the existing installation, then the packaged URL. -->
+    <SetProperty Id="HATCHECKSERVERURL" Action="UseExistingServerUrl" Value="[EXISTINGSERVERURL]"
+                 Before="UsePackagedServerUrl" Sequence="both" Condition="EXISTINGSERVERURL AND NOT HATCHECKSERVERURL" />
+    <SetProperty Id="HATCHECKSERVERURL" Action="UsePackagedServerUrl" Value="$(var.ServerUrl)"
+                 Before="LaunchConditions" Sequence="both" Condition="NOT HATCHECKSERVERURL" />
+    <Launch Condition="REMOVE ~= &quot;ALL&quot; OR (HATCHECKSERVERURL AND HATCHECKSERVERURL ~&lt;&lt; &quot;https://&quot; AND NOT HATCHECKSERVERURL &gt;&lt; &quot;@&quot; AND NOT HATCHECKSERVERURL &gt;&lt; &quot;?&quot; AND NOT HATCHECKSERVERURL &gt;&lt; &quot;#&quot;)"
+            Message="Set HATCHECKSERVERURL to your company's HTTPS Hatcheck address without credentials, query, or fragment. The launcher also validates the address before opening it." />
+
+    <ui:WixUI Id="WixUI_Minimal" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/NoeticSoul/Hatcheck" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Hatcheck Cloud">
+        <Component Id="Launcher" Guid="*" Bitness="always64">
+          <File Id="LauncherExecutable" Source="$(var.PublishDirectory)\Hatcheck.exe" KeyPath="yes" />
+          <File Id="ApacheLicense" Source="$(var.RepositoryRoot)\LICENSE" />
+          <File Id="AttributionNotice" Source="$(var.RepositoryRoot)\NOTICE" />
+          <File Id="DeploymentNotice" Source="$(var.PilotNotice)" Name="PILOT-NOTICE.txt" />
+          <File Id="RuntimeLicense" Source="$(var.PublishDirectory)\DOTNET-LICENSE.txt" />
+          <File Id="RuntimeNotices" Source="$(var.PublishDirectory)\DOTNET-THIRD-PARTY-NOTICES.txt" />
+          <File Id="InstallerLicense" Source="$(var.RepositoryRoot)\packaging\windows\WIX-LICENSE.txt" />
+        </Component>
+        <Component Id="ServerConfiguration" Guid="*" Bitness="always64">
+          <RegistryValue Root="HKLM" Key="Software\Hatcheck\Cloud" Name="ServerUrl"
+                         Type="string" Value="[HATCHECKSERVERURL]" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="HatcheckStartMenu" Name="Hatcheck">
+        <Component Id="StartMenuShortcut" Guid="*" Bitness="always64">
+          <Shortcut Id="HatcheckStartShortcut" Name="Hatcheck" Description="Open the shared Hatcheck application"
+                    Target="[#LauncherExecutable]" WorkingDirectory="INSTALLFOLDER" />
+          <RemoveFolder Id="RemoveHatcheckStartMenu" On="uninstall" />
+          <RegistryValue Root="HKLM" Key="Software\Hatcheck\Cloud" Name="StartMenuShortcut"
+                         Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="DesktopFolder">
+      <Component Id="DesktopShortcut" Guid="*" Bitness="always64">
+        <Shortcut Id="HatcheckDesktopShortcut" Name="Hatcheck" Description="Open the shared Hatcheck application"
+                  Target="[#LauncherExecutable]" WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKLM" Key="Software\Hatcheck\Cloud" Name="DesktopShortcut"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+    <Feature Id="CloudClient" Title="Hatcheck Cloud launcher" Level="1">
+      <ComponentRef Id="Launcher" />
+      <ComponentRef Id="ServerConfiguration" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="DesktopShortcut" />
+    </Feature>
+  </Package>
+</Wix>

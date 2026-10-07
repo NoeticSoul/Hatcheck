@@ -1,8 +1,10 @@
 // Shared server context: the Hono environment type, router factory with the
 // standard validation error hook, and small helpers used across routes.
 import { OpenAPIHono } from "@hono/zod-openapi";
+import { isIP } from "node:net";
 import type { Context } from "hono";
 import type { AppConfig } from "../config";
+import { matchesProxyAddress } from "../network/proxy-address";
 import type {
   AuthSource,
   Role,
@@ -59,22 +61,25 @@ export function sanitizeUser(user: UserRecord): SafeUser {
 
 /**
  * Client IP for rate limiting and audit records. X-Forwarded-For is
- * client-controlled, so it is honored only when HATCHECK_TRUST_PROXY is set
- * (i.e. a trusted reverse proxy fronts the server) — and then only its LAST
- * hop, which is the one appended by that proxy; earlier hops are whatever
- * the client sent. Otherwise the socket address from the runtime is used.
+ * client-controlled. Honor its final hop only when the connecting socket
+ * belongs to an explicitly configured proxy that appends the client IP.
+ * Missing socket evidence never establishes a trusted proxy (including tests).
  */
 export function clientIp(c: Context<AppEnv>): string {
-  if (c.get("config").trustProxy) {
+  const peer = c.env?.remoteAddr;
+  const config = c.get("config");
+  const normalize = (ip: string) => ip.toLowerCase().replace(/^::ffff:(?=\d+\.)/, "");
+  if (config.trustProxy && peer !== undefined &&
+      config.trustedProxies.some((entry) => matchesProxyAddress(peer, entry))) {
     const forwarded = c.req.header("x-forwarded-for");
     const hops = forwarded
       ?.split(",")
       .map((h) => h.trim())
       .filter((h) => h !== "");
     const last = hops?.[hops.length - 1];
-    if (last !== undefined) return last;
+    if (last !== undefined && isIP(last) !== 0) return normalize(last);
   }
-  return c.env?.remoteAddr ?? "local";
+  return peer ?? "local";
 }
 
 /** New router with the standard zod validation hook (400, error shape). */

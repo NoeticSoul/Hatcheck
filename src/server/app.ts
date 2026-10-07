@@ -6,11 +6,15 @@ import pkg from "../../package.json";
 import type { AppConfig } from "../config";
 import type { Store } from "../db/store";
 import { createRouter, errorBody } from "./context";
+import { csvMediaType, protectBrowserWrites, securityHeaders } from "./middleware/browser-security";
+import { atomicMutation } from "./middleware/atomic";
 import { aiRoutes } from "./routes/ai";
 import { assetRoutes } from "./routes/assets";
 import { auditRoutes } from "./routes/audit";
 import { authRoutes } from "./routes/auth";
 import { custodyRoutes } from "./routes/custody";
+import { dashboardRoutes } from "./routes/dashboard";
+import { documentRoutes } from "./routes/documents";
 import { exceptionRoutes } from "./routes/exceptions";
 import { healthRoutes } from "./routes/health";
 import { importRoutes } from "./routes/imports";
@@ -25,6 +29,10 @@ export function createApp(store: Store, config: AppConfig) {
     c.set("config", config);
     await next();
   });
+
+  app.use("*", securityHeaders);
+  app.use("/api/*", protectBrowserWrites);
+  app.use("/api/v1/imports/assets", csvMediaType);
 
   // The API is JSON-only — nothing legitimate approaches this size —
   // except CSV import uploads, which get their own larger cap (a 5000-row
@@ -44,9 +52,11 @@ export function createApp(store: Store, config: AppConfig) {
       ? csvLimit(c, next)
       : jsonLimit(c, next),
   );
+  app.use("/api/*", atomicMutation);
 
   app.onError((err, c) => {
-    console.error("Unhandled error:", err);
+    // Database/provider errors may embed connection strings or token payloads.
+    console.error("Unhandled request error:", err instanceof Error ? err.name : "unknown");
     return c.json(errorBody("internal_error", "Internal server error"), 500);
   });
 
@@ -58,6 +68,8 @@ export function createApp(store: Store, config: AppConfig) {
   app.route("/", locationRoutes());
   app.route("/", assetRoutes());
   app.route("/", custodyRoutes());
+  app.route("/", dashboardRoutes());
+  app.route("/", documentRoutes());
   app.route("/", importRoutes());
   app.route("/", exceptionRoutes());
   app.route("/", auditRoutes());
@@ -74,7 +86,7 @@ export function createApp(store: Store, config: AppConfig) {
     info: {
       title: "Hatcheck API",
       version: pkg.version,
-      description: "Self-hosted IT management platform API (Phase 1).",
+      description: "Self-hosted inventory, custody, administration, and structured knowledge-base API.",
     },
   });
 

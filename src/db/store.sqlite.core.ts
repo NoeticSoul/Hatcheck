@@ -20,6 +20,8 @@ import {
 } from "drizzle-orm";
 import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core";
 import { fileURLToPath } from "node:url";
+import { createSqliteDocuments } from "./documents.sqlite";
+import { ConnectionGate } from "./connection-gate";
 import { timeOrderedId } from "./id";
 import * as schema from "./schema.sqlite";
 import {
@@ -86,7 +88,7 @@ export interface SqliteLifecycle {
 /**
  * Portable ASCII-case-insensitive substring match: lower(column) LIKE
  * with the caller text backslash-escaped so % _ \ are literal. Never
- * ILIKE (PG-only) and never COLLATE (engine-specific).
+ * ILIKE is unnecessary; ordering uses an explicit byte collation below.
  */
 function ciContains(column: Column, text: string): SQL {
   // The pattern must be lowercased in JS to match lower(column): SQLite's
@@ -96,18 +98,6 @@ function ciContains(column: Column, text: string): SQL {
   const pattern =
     "%" + text.toLowerCase().replace(/[\\%_]/g, (ch) => "\\" + ch) + "%";
   return sql`lower(${column}) like ${pattern} escape '\\'`;
-}
-
-function byName<T extends { name: string; id: string }>(
-  a: T,
-  b: T,
-): number {
-  // Normalize in JS: SQLite orders by bytes, PostgreSQL by locale
-  // collation; both stores re-sort so the engines agree exactly. The id
-  // tie-breaker makes the order total, so equal names cannot reshuffle
-  // between paginated queries.
-  if (a.name !== b.name) return a.name < b.name ? -1 : 1;
-  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
 function buildLocationRow(location: NewLocation): LocationRecord {
@@ -159,10 +149,11 @@ function buildInterfaceRow(
   };
 }
 
-function buildCustodyRow(event: NewCustodyEvent): CustodyEventRecord {
+function buildCustodyRow(event: NewCustodyEvent, sequence: number): CustodyEventRecord {
   return {
     id: timeOrderedId(),
     assetId: event.assetId,
+    sequence,
     at: Date.now(),
     type: event.type,
     holderUserId: event.holderUserId ?? null,
@@ -282,28 +273,67 @@ function assetConditions(
 
 /**
  * Correlated subquery selecting only each asset's latest custody event by
- * (at desc, id desc): portable across both engines, no window functions.
+ * highest per-asset sequence: portable across both engines.
  */
 function isLatestCustodyEvent(): SQL {
-  return sql`${schema.custodyEvents.id} = (select ce2.id from custody_events ce2 where ce2.asset_id = ${schema.custodyEvents.assetId} order by ce2.at desc, ce2.id desc limit 1)`;
+  return sql`${schema.custodyEvents.id} = (select ce2.id from custody_events ce2 where ce2.asset_id = ${schema.custodyEvents.assetId} order by ce2.sequence desc limit 1)`;
 }
 
 /**
- * Matches assets whose CURRENT custody event — the latest by (at desc,
- * id desc) — is a check_out held by the given user. Same portable
+ * Matches assets whose CURRENT custody event (highest sequence) is a
+ * check_out held by the given user. Same portable
  * correlated-subquery style as isLatestCustodyEvent; past holders and
  * checked-in assets never match.
  */
 function currentlyHeldBy(userId: string): SQL {
-  return sql`exists (select 1 from custody_events ce where ce.asset_id = ${schema.assets.id} and ce.type = 'check_out' and ce.holder_user_id = ${userId} and ce.id = (select ce2.id from custody_events ce2 where ce2.asset_id = ${schema.assets.id} order by ce2.at desc, ce2.id desc limit 1))`;
+  return sql`exists (select 1 from custody_events ce where ce.asset_id = ${schema.assets.id} and ce.type = 'check_out' and ce.holder_user_id = ${userId} and ce.id = (select ce2.id from custody_events ce2 where ce2.asset_id = ${schema.assets.id} order by ce2.sequence desc limit 1))`;
 }
 
 export function buildSqliteStore<TRun>(
   db: BaseSQLiteDatabase<"sync", TRun, typeof schema>,
   lifecycle: SqliteLifecycle,
+  context?: { active: boolean },
+  gate = new ConnectionGate(),
 ): Store {
-  return {
+  // SQLite drivers accept only synchronous transaction callbacks. Control
+  // BEGIN/savepoints directly so asynchronous application work remains atomic.
+  async function withTransaction<T>(
+    work: (connection: typeof db) => Promise<T>,
+  ): Promise<T> {
+    return gate.run(async () => {
+      if (context && !context.active) throw new Error("Transaction store is no longer active");
+      const savepoint = context ? `hc_${crypto.randomUUID().replaceAll("-", "")}` : null;
+      db.run(sql.raw(savepoint ? `SAVEPOINT ${savepoint}` : "BEGIN IMMEDIATE"));
+      try {
+        const result = await work(db);
+        db.run(sql.raw(savepoint ? `RELEASE SAVEPOINT ${savepoint}` : "COMMIT"));
+        return result;
+      } catch (error) {
+        db.run(sql.raw(savepoint ? `ROLLBACK TO SAVEPOINT ${savepoint}` : "ROLLBACK"));
+        if (savepoint) db.run(sql.raw(`RELEASE SAVEPOINT ${savepoint}`));
+        throw error;
+      }
+    });
+  }
+
+  const store: Store = {
+    ...createSqliteDocuments(db),
     kind: "sqlite",
+
+    async transaction<T>(work: (tx: Store) => Promise<T>): Promise<T> {
+      return withTransaction(async (connection) => {
+        const child = { active: true };
+        try {
+          return await work(buildSqliteStore(connection, lifecycle, child));
+        } finally {
+          child.active = false;
+        }
+      });
+    },
+
+    async readiness(): Promise<void> {
+      db.get(sql`select 1`);
+    },
 
     async migrate() {
       lifecycle.migrate();
@@ -339,11 +369,14 @@ export function buildSqliteStore<TRun>(
       return rows[0] ?? null;
     },
 
-    async getUserByOidcSubject(subject: string): Promise<UserRecord | null> {
+    async getUserByOidcSubject(subject: string, issuer?: string): Promise<UserRecord | null> {
       const rows = db
         .select()
         .from(schema.users)
-        .where(eq(schema.users.oidcSubject, subject))
+        .where(and(
+          eq(schema.users.oidcSubject, subject),
+          issuer === undefined ? isNull(schema.users.oidcIssuer) : eq(schema.users.oidcIssuer, issuer),
+        ))
         .limit(1)
         .all();
       return rows[0] ?? null;
@@ -353,13 +386,9 @@ export function buildSqliteStore<TRun>(
       const rows = db
         .select()
         .from(schema.users)
-        .orderBy(asc(schema.users.email))
+        .orderBy(asc(sql`${schema.users.email} collate BINARY`))
         .all();
-      // Normalize in JS: SQLite orders by bytes, PostgreSQL by locale
-      // collation; both stores re-sort so the engines agree exactly.
-      return rows.sort((a, b) =>
-        a.email < b.email ? -1 : a.email > b.email ? 1 : 0,
-      );
+      return rows;
     },
 
     async updateUser(id: string, patch: UserPatch): Promise<UserRecord | null> {
@@ -505,11 +534,11 @@ export function buildSqliteStore<TRun>(
         .select()
         .from(schema.locations)
         .where(locationConditions(query))
-        .orderBy(asc(schema.locations.name), asc(schema.locations.id))
+        .orderBy(asc(sql`${schema.locations.name} collate BINARY`), asc(schema.locations.id))
         .limit(query.limit)
         .offset(query.offset ?? 0)
         .all();
-      return rows.sort(byName);
+      return rows;
     },
 
     async countLocations(
@@ -568,8 +597,8 @@ export function buildSqliteStore<TRun>(
       interfaces: NewAssetInterface[],
     ): Promise<AssetRecord> {
       const row = buildAssetRow(asset);
-      // The sync driver requires a synchronous transaction callback.
-      db.transaction((tx) => {
+      // This shares the asynchronous transaction/savepoint machinery.
+      await withTransaction(async (tx) => {
         tx.insert(schema.assets).values(row).run();
         for (const iface of interfaces) {
           tx.insert(schema.assetInterfaces)
@@ -614,11 +643,11 @@ export function buildSqliteStore<TRun>(
         .select()
         .from(schema.assets)
         .where(assetConditions(query))
-        .orderBy(asc(schema.assets.name), asc(schema.assets.id))
+        .orderBy(asc(sql`${schema.assets.name} collate BINARY`), asc(schema.assets.id))
         .limit(query.limit)
         .offset(query.offset ?? 0)
         .all();
-      return rows.sort(byName);
+      return rows;
     },
 
     async countAssets(
@@ -736,11 +765,9 @@ export function buildSqliteStore<TRun>(
       newAssetLocationId?: string | null,
       requireStatus?: AssetStatus,
     ): Promise<CustodyAppendResult | null> {
-      // The sync driver requires a synchronous transaction callback; the
-      // whole append runs on SQLite's single synchronous connection, which
-      // serializes concurrent appends inherently (no FOR UPDATE exists or
-      // is needed — the PG impl locks the asset row for the same effect).
-      return db.transaction((tx): CustodyAppendResult | null => {
+      // BEGIN IMMEDIATE serializes independent SQLite writers. The gate
+      // keeps all requests on this connection outside the open unit.
+      return withTransaction(async (tx): Promise<CustodyAppendResult | null> => {
         const assetRows = tx
           .select({
             id: schema.assets.id,
@@ -767,8 +794,7 @@ export function buildSqliteStore<TRun>(
           .from(schema.custodyEvents)
           .where(eq(schema.custodyEvents.assetId, event.assetId))
           .orderBy(
-            desc(schema.custodyEvents.at),
-            desc(schema.custodyEvents.id),
+            desc(schema.custodyEvents.sequence),
           )
           .limit(1)
           .all();
@@ -782,7 +808,7 @@ export function buildSqliteStore<TRun>(
             return { ok: false, conflict: "not_checked_out" };
           }
         }
-        const row = buildCustodyRow(event);
+        const row = buildCustodyRow(event, (latest?.sequence ?? 0) + 1);
         tx.insert(schema.custodyEvents).values(row).run();
         if (newAssetStatus !== undefined || newAssetLocationId !== undefined) {
           const patch: AssetPatch = {};
@@ -822,10 +848,16 @@ export function buildSqliteStore<TRun>(
         .select()
         .from(schema.custodyEvents)
         .where(eq(schema.custodyEvents.assetId, assetId))
-        .orderBy(desc(schema.custodyEvents.at), desc(schema.custodyEvents.id))
+        .orderBy(desc(schema.custodyEvents.sequence))
         .limit(opts.limit)
         .offset(opts.offset ?? 0)
         .all();
+    },
+
+    async listRecentCustodyEvents(limit: number): Promise<CustodyEventRecord[]> {
+      return db.select().from(schema.custodyEvents)
+        .orderBy(desc(schema.custodyEvents.at), desc(schema.custodyEvents.id))
+        .limit(limit).all();
     },
 
     async countCustodyEvents(assetId: string): Promise<number> {
@@ -844,7 +876,7 @@ export function buildSqliteStore<TRun>(
         .select()
         .from(schema.custodyEvents)
         .where(eq(schema.custodyEvents.assetId, assetId))
-        .orderBy(desc(schema.custodyEvents.at), desc(schema.custodyEvents.id))
+        .orderBy(desc(schema.custodyEvents.sequence))
         .limit(1)
         .all();
       const latest = rows[0];
@@ -1057,4 +1089,22 @@ export function buildSqliteStore<TRun>(
       return rows[0] ?? null;
     },
   };
+  // Every access participates in the gate, including reads. A second request
+  // must never observe or accidentally write into another request's unit.
+  return new Proxy(store, {
+    get(target, key, receiver) {
+      const value: unknown = Reflect.get(target, key, receiver);
+      if (typeof value !== "function") return value;
+      if (key === "transaction" || key === "createAssetWithInterfaces" || key === "appendCustodyEvent") {
+        return value.bind(target);
+      }
+      return (...args: unknown[]) => gate.run(async () => {
+        if (context && !context.active) throw new Error("Transaction store is no longer active");
+        if (context && (key === "migrate" || key === "close")) {
+          throw new Error("Transaction stores cannot migrate or close the connection");
+        }
+        return Reflect.apply(value, target, args);
+      });
+    },
+  });
 }

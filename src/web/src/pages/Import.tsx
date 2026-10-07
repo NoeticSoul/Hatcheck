@@ -14,6 +14,7 @@ import {
 } from "../lib/api";
 import { formatDateTime } from "../lib/format";
 import { canWrite, useCurrentUser } from "../components/layout";
+import { Pagination } from "../components/pagination";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import {
@@ -40,7 +41,7 @@ const COLUMNS_HINT =
   "manufacturer, notes, asset_tag, serial_number, system_uuid, " +
   "mac_addresses. Every row needs at least one identity field.";
 
-function OutcomeBadge({ outcome }: { outcome: ImportRowOutcome }) {
+export function OutcomeBadge({ outcome }: { outcome: ImportRowOutcome }) {
   switch (outcome) {
     case "created":
       return <Badge>Created</Badge>;
@@ -53,12 +54,12 @@ function OutcomeBadge({ outcome }: { outcome: ImportRowOutcome }) {
   }
 }
 
-function CountsLine({ job }: { job: ApiImportJob }) {
+export function CountsLine({ job }: { job: ApiImportJob }) {
   return (
-    <p className="text-sm text-muted-foreground">
+    <span className="block text-sm text-muted-foreground">
       {job.totalRows} rows: {job.createdCount} created, {job.skippedCount}{" "}
       skipped, {job.collisionCount} collisions, {job.errorCount} errors
-    </p>
+    </span>
   );
 }
 
@@ -66,6 +67,10 @@ export function ImportPage() {
   const user = useCurrentUser();
   const writer = canWrite(user);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const inputRevision = useRef(0);
+  const fileReadRequest = useRef(0);
+  const [reviewed, setReviewed] = useState<{ csv: string; filename: string; hash: string } | null>(null);
+  const [readingFile, setReadingFile] = useState(false);
 
   const [csv, setCsv] = useState("");
   const [filename, setFilename] = useState("");
@@ -75,23 +80,39 @@ export function ImportPage() {
 
   const [recent, setRecent] = useState<ApiImportJob[] | null>(null);
   const [recentNonce, setRecentNonce] = useState(0);
+  const [recentOffset, setRecentOffset] = useState(0);
+  const [recentTotal, setRecentTotal] = useState(0);
+  const [recentError, setRecentError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!writer) return;
     let cancelled = false;
+    setRecentError(null);
+    setRecent(null);
     api
-      .listImports(10)
+      .listImports(10, recentOffset)
       .then((page) => {
-        if (!cancelled) setRecent(page.items);
+        if (!cancelled) { setRecent(page.items); setRecentTotal(page.total); }
       })
-      .catch(() => {});
+      .catch(() => { if (!cancelled) setRecentError("Could not load import history."); });
     return () => {
       cancelled = true;
     };
-  }, [writer, recentNonce]);
+  }, [writer, recentNonce, recentOffset]);
 
   async function loadFile(file: File) {
-    setCsv(await file.text());
+    const fileRequest = ++fileReadRequest.current;
+    const revision = ++inputRevision.current;
+    setResult(null);
+    setReviewed(null);
+    setReadingFile(true);
+    let contents: string;
+    try { contents = await file.text(); }
+    catch { if (fileRequest === fileReadRequest.current && revision === inputRevision.current) setError("Could not read the file. Choose it again."); return; }
+    finally { if (fileRequest === fileReadRequest.current) setReadingFile(false); }
+    if (fileRequest !== fileReadRequest.current || revision !== inputRevision.current) return;
+    inputRevision.current++;
+    setCsv(contents);
     // The API caps filename at 200 chars; a longer picked name must not
     // poison the whole request.
     setFilename(file.name.slice(0, 200));
@@ -100,13 +121,30 @@ export function ImportPage() {
   }
 
   async function run(mode: "dry_run" | "commit") {
+    if (busy !== "none" || readingFile) return;
+    if (mode === "commit" && (reviewed === null || reviewed.csv !== csv || reviewed.filename !== filename)) return;
+    const revision = inputRevision.current;
+    const submittedCsv = mode === "commit" ? reviewed!.csv : csv;
+    const submittedFilename = mode === "commit" ? reviewed!.filename : filename;
+    const reviewedHash = reviewed?.hash;
     setBusy(mode);
     setError(null);
+    if (mode === "dry_run") { setReviewed(null); setResult(null); }
     try {
-      const res = await api.runImport(csv, mode, filename.trim() || undefined);
-      setResult(res);
+      const res = await api.runImport(submittedCsv, mode, submittedFilename.trim() || undefined);
       setRecentNonce((n) => n + 1);
+      setRecentOffset(0);
+      if (revision !== inputRevision.current) return;
+      if (mode === "commit" && res.job.fileHash !== reviewedHash) {
+        setReviewed(null);
+        setResult(null);
+        setError("The import report did not match the reviewed file. Open the saved report before retrying.");
+        return;
+      }
+      setResult(res);
+      setReviewed(mode === "dry_run" ? { csv: submittedCsv, filename: submittedFilename, hash: res.job.fileHash } : null);
     } catch (err) {
+      if (revision !== inputRevision.current) return;
       setError(
         err instanceof ApiError ? err.message : "Import request failed.",
       );
@@ -153,14 +191,16 @@ export function ImportPage() {
               />
               <Button
                 variant="outline"
+                disabled={busy === "commit"}
                 onClick={() => fileRef.current?.click()}
               >
                 <FileUp className="h-4 w-4" aria-hidden="true" />
-                Choose CSV file
+                {readingFile ? "Reading file..." : "Choose CSV file"}
               </Button>
               <Input
                 value={filename}
-                onChange={(e) => setFilename(e.target.value)}
+                disabled={busy === "commit"}
+                onChange={(e) => { inputRevision.current++; setFilename(e.target.value); setReviewed(null); setResult(null); }}
                 placeholder="Filename (optional)"
                 aria-label="Filename"
                 maxLength={200}
@@ -172,9 +212,12 @@ export function ImportPage() {
               <Textarea
                 id="csv-text"
                 value={csv}
+                disabled={busy === "commit"}
                 onChange={(e) => {
+                  inputRevision.current++;
                   setCsv(e.target.value);
                   setResult(null);
+                  setReviewed(null);
                 }}
                 rows={10}
                 placeholder={"name,serial_number\nLoaner Laptop 01,SN-0001"}
@@ -182,25 +225,26 @@ export function ImportPage() {
               />
             </div>
             {error !== null && (
-              <p className="mt-3 text-sm text-destructive">{error}</p>
+              <p role="alert" className="mt-3 text-sm text-destructive">{error}</p>
             )}
             <div className="mt-4 flex flex-wrap gap-2">
               <Button
                 variant="outline"
-                disabled={busy !== "none" || csv.trim() === ""}
+                disabled={busy !== "none" || readingFile || csv.trim() === ""}
                 onClick={() => void run("dry_run")}
               >
                 <Play className="h-4 w-4" aria-hidden="true" />
                 {busy === "dry_run" ? "Previewing..." : "Preview (dry run)"}
               </Button>
               <Button
-                disabled={busy !== "none" || csv.trim() === ""}
+                disabled={busy !== "none" || readingFile || reviewed === null || reviewed.csv !== csv || reviewed.filename !== filename}
                 onClick={() => void run("commit")}
               >
                 <Upload className="h-4 w-4" aria-hidden="true" />
                 {busy === "commit" ? "Importing..." : "Commit import"}
               </Button>
             </div>
+            {reviewed === null && <p className="mt-2 text-xs text-muted-foreground">Preview the current file before committing it.</p>}
           </CardContent>
         </Card>
 
@@ -210,18 +254,18 @@ export function ImportPage() {
             <CardDescription>Newest first</CardDescription>
           </CardHeader>
           <CardContent>
-            {recent === null ? (
+            {recentError !== null ? <div role="alert"><p className="text-sm text-destructive">{recentError}</p><Button className="mt-2" variant="outline" size="sm" onClick={() => setRecentNonce((n) => n + 1)}>Retry history</Button></div> : recent === null ? (
               <p className="text-sm text-muted-foreground">Loading...</p>
             ) : recent.length === 0 ? (
               <p className="text-sm text-muted-foreground">No imports yet.</p>
             ) : (
-              <ul className="space-y-3">
+              <><ul className="space-y-3">
                 {recent.map((job) => (
                   <li key={job.id} className="text-sm">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="truncate font-medium">
+                      <Link to={`/import/${job.id}`} className="truncate font-medium underline underline-offset-4">
                         {job.filename ?? "(unnamed)"}
-                      </span>
+                      </Link>
                       <Badge
                         variant={
                           job.mode === "commit" ? "default" : "muted"
@@ -236,7 +280,7 @@ export function ImportPage() {
                     <CountsLine job={job} />
                   </li>
                 ))}
-              </ul>
+              </ul><Pagination total={recentTotal} limit={10} offset={recentOffset} onPage={setRecentOffset} noun="imports" /></>
             )}
           </CardContent>
         </Card>
@@ -251,6 +295,7 @@ export function ImportPage() {
               </CardTitle>
               <CardDescription>
                 <CountsLine job={result.job} />
+                <Link to={`/import/${result.job.id}`} className="mt-1 block text-xs underline">Open full report and download outcomes</Link>
                 {result.priorImport !== null && (
                   <span className="mt-1 block text-xs">
                     This exact file was already committed on{" "}

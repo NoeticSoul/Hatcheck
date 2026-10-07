@@ -91,6 +91,8 @@ export interface ApiAssetInterface {
 export interface ApiCustodyEvent {
   id: string;
   assetId: string;
+  sequence: number;
+  assetName?: string;
   at: number;
   type: "check_out" | "check_in";
   holderUserId: string | null;
@@ -104,6 +106,13 @@ export interface ApiCustodyEvent {
 
 export interface ApiAssetListItem extends ApiAsset {
   currentCustody: ApiCustodyEvent | null;
+}
+
+export interface DashboardResponse {
+  assets: { total: number; in_stock: number; deployed: number; in_repair: number; retired: number };
+  openExceptions: number;
+  recentCustody: ApiCustodyEvent[];
+  overdueDocuments?: number;
 }
 
 export interface Page<T> {
@@ -221,7 +230,17 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(
+// Protected pages subscribe to this event so expiry is handled wherever
+// it is first observed, including CSV calls outside the JSON helper.
+export const SESSION_EXPIRED_EVENT = "hatcheck:session-expired";
+
+function reportUnauthorized(path: string, status: number) {
+  if (status === 401 && path !== "/api/v1/auth/login" && path !== "/api/v1/auth/me") {
+    window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+  }
+}
+
+export async function request<T>(
   path: string,
   init: { method?: string; body?: unknown } = {},
 ): Promise<T> {
@@ -240,6 +259,7 @@ async function request<T>(
   }
 
   if (!res.ok) {
+    reportUnauthorized(path, res.status);
     let code = "unknown";
     let message = `Request failed with status ${res.status}`;
     try {
@@ -258,6 +278,9 @@ async function request<T>(
 }
 
 export const api = {
+  dashboard(): Promise<DashboardResponse> {
+    return request("/api/v1/dashboard");
+  },
   health(): Promise<HealthResponse> {
     return request<HealthResponse>("/api/v1/health");
   },
@@ -275,6 +298,22 @@ export const api = {
 
   me(): Promise<{ user: ApiUser }> {
     return request<{ user: ApiUser }>("/api/v1/auth/me");
+  },
+
+  listUsers(): Promise<{ users: ApiUser[] }> {
+    return request("/api/v1/users");
+  },
+
+  createUser(input: { email: string; displayName: string; role: Role; password: string }): Promise<{ user: ApiUser }> {
+    return request("/api/v1/users", { method: "POST", body: input });
+  },
+
+  updateUser(id: string, patch: { displayName?: string; role?: Role; isActive?: boolean; password?: string }): Promise<{ user: ApiUser }> {
+    return request(`/api/v1/users/${id}`, { method: "PATCH", body: patch });
+  },
+
+  changePassword(currentPassword: string, newPassword: string): Promise<{ ok: true }> {
+    return request("/api/v1/users/me/password", { method: "POST", body: { currentPassword, newPassword } });
   },
 
   aiStatus(): Promise<AiStatusResponse> {
@@ -471,6 +510,7 @@ export const api = {
         },
       );
       if (!res.ok) {
+        reportUnauthorized("/api/v1/imports/assets", res.status);
         let code = "unknown";
         let message = `Request failed with status ${res.status}`;
         try {
@@ -496,6 +536,10 @@ export const api = {
     return request<Page<ApiImportJob>>(
       `/api/v1/imports?${params.toString()}`,
     );
+  },
+
+  getImport(jobId: string): Promise<{ job: ApiImportJob }> {
+    return request(`/api/v1/imports/${jobId}`);
   },
 
   listImportRows(

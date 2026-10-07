@@ -22,6 +22,20 @@
       "when": 1784407950388,
       "tag": "0002_locations_root_name_uq",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791323671081,
+      "tag": "0003_integrity_and_oidc",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791323768742,
+      "tag": "0004_document_studio",
+      "breakpoints": true
     }
   ]
 }

@@ -44,31 +44,40 @@ export async function ensureInitialAdmin(
     process.env.HATCHECK_INIT_ADMIN_EMAIL ??
     "admin@hatcheck.test"
   ).toLowerCase();
-  const password =
+  const suppliedPassword =
     opts.adminPassword ??
-    process.env.HATCHECK_SEED_ADMIN_PASSWORD ??
-    generatePassword();
+    (process.env.HATCHECK_SEED_ADMIN_PASSWORD || undefined);
+  const password = suppliedPassword ?? generatePassword();
 
-  const user = await store.createUser({
-    email,
-    displayName: "Instance Admin",
-    role: "admin",
-    authSource: "local",
-    passwordHash: await hashPassword(password),
+  const passwordHash = await hashPassword(password);
+  const created = await store.transaction(async (tx) => {
+    if ((await tx.countUsers()) > 0) return false;
+    const user = await tx.createUser({
+      email,
+      displayName: "Instance Admin",
+      role: "admin",
+      authSource: "local",
+      passwordHash,
+    });
+    await tx.appendAudit({
+      action: "user.create",
+      actorEmail: "system:bootstrap",
+      entityType: "user",
+      entityId: user.id,
+      details: {
+        before: null,
+        after: { email: user.email, displayName: user.displayName, role: user.role },
+        bootstrap: true,
+      },
+    });
+    return true;
   });
-  await store.appendAudit({
-    action: "user.create",
-    actorEmail: "system:bootstrap",
-    entityType: "user",
-    entityId: user.id,
-    details: {
-      before: null,
-      after: { email: user.email, displayName: user.displayName, role: user.role },
-      bootstrap: true,
-    },
-  });
-  // The one and only place the plaintext exists: operator handoff.
-  log(`bootstrap: created initial admin ${email} password: ${password}`);
+  if (!created) return { created: false };
+  // Generated local credentials require a one-time operator handoff. A
+  // supplied secret already has that channel and must not reach cloud logs.
+  log(suppliedPassword === undefined
+    ? `bootstrap: created initial admin ${email} password: ${password}`
+    : `bootstrap: created initial admin ${email}; use the configured initial password.`);
   log("bootstrap: change this password after first login.");
   return { created: true, email };
 }

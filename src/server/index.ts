@@ -7,14 +7,15 @@
 // bundle is served from files embedded in the binary and the migrations
 // are extracted beside the runtime before the store boots. With the
 // committed empty manifest, behavior is unchanged.
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { serveStatic } from "hono/bun";
 import { loadConfig } from "../config";
 import { createStore } from "../db/client";
 import { createApp } from "./app";
-import { ensureInitialAdmin } from "./bootstrap";
+import { initializeStore } from "./initialize";
+import { createLifecycle, type RuntimeServer } from "./lifecycle";
 import { manifest } from "./standalone-manifest";
 
 // bun-types is not installed (tsconfig types: node), so declare the minimal
@@ -34,11 +35,9 @@ declare const Bun: {
       request: Request,
       server: BunServer,
     ) => Response | Promise<Response>;
-  }): { port: number };
+  }): RuntimeServer & { port: number };
   file(path: string): BunFileLike;
 };
-
-const SESSION_SWEEP_INTERVAL_MS = 60 * 60 * 1000; // hourly
 
 const isStandalone = Object.keys(manifest.webAssets).length > 0;
 if (isStandalone) {
@@ -51,8 +50,9 @@ if (isStandalone) {
 // drizzle migrator reads a folder, and source-tree paths do not exist
 // inside a compiled binary. A fresh temp dir per boot keeps the data
 // directory clean and makes stale-migration mixups impossible.
+let extractRoot: string | undefined;
 if (Object.keys(manifest.migrationFiles).length > 0) {
-  const extractRoot = join(
+  extractRoot = join(
     tmpdir(),
     `hatcheck-migrations-${process.pid.toString(36)}-${Date.now().toString(36)}`,
   );
@@ -70,10 +70,13 @@ if (Object.keys(manifest.migrationFiles).length > 0) {
 
 const config = loadConfig();
 const store = await createStore(config);
-await store.migrate();
-// First run on an empty database: create the initial admin and print its
-// password once. No-op the moment any user exists (seeded or otherwise).
-await ensureInitialAdmin(store);
+try {
+  await initializeStore(config, store);
+} catch (error) {
+  await store.close();
+  if (extractRoot !== undefined) rmSync(extractRoot, { recursive: true, force: true });
+  throw error;
+}
 
 const app = createApp(store, config);
 
@@ -109,13 +112,7 @@ if (isStandalone) {
   });
 }
 
-setInterval(() => {
-  store.deleteExpiredSessions(Date.now()).catch((err: unknown) => {
-    console.error("Expired-session sweep failed:", err);
-  });
-}, SESSION_SWEEP_INTERVAL_MS);
-
-Bun.serve({
+const server = Bun.serve({
   port: config.port,
   // The socket address rides in on the Hono env so clientIp() has a value
   // the client cannot forge (X-Forwarded-For is only trusted behind a
@@ -123,6 +120,26 @@ Bun.serve({
   fetch: (request, server) =>
     app.fetch(request, { remoteAddr: server.requestIP(request)?.address }),
 });
+
+const lifecycle = createLifecycle(store, server, {
+  cleanup: () => {
+    if (extractRoot !== undefined) rmSync(extractRoot, { recursive: true, force: true });
+  },
+});
+let stopping = false;
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.on(signal, () => {
+    if (stopping) return;
+    stopping = true;
+    lifecycle.stop().then(
+      () => process.exit(0),
+      (error: unknown) => {
+        console.error("Shutdown failed:", error);
+        process.exit(1);
+      },
+    );
+  });
+}
 
 console.log(
   `Hatcheck API (${config.db.kind}) listening on http://localhost:${config.port}`,

@@ -23,6 +23,9 @@ export function Login() {
   const [oidcEnabled, setOidcEnabled] = useState(false);
 
   const oidcFailed = searchParams.get("error") === "oidc";
+  const requestedDestination = searchParams.get("returnTo");
+  const destination = requestedDestination?.startsWith("/") && !requestedDestination.startsWith("//") && !requestedDestination.includes("\\") && !requestedDestination.startsWith("/login")
+    ? requestedDestination : "/";
 
   useEffect(() => {
     let cancelled = false;
@@ -45,7 +48,7 @@ export function Login() {
     setSubmitting(true);
     try {
       await api.login(email, password);
-      navigate("/", { replace: true });
+      navigate(destination, { replace: true });
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         setError("Invalid email or password.");
@@ -78,6 +81,7 @@ export function Login() {
             </CardDescription>
           </CardHeader>
           <CardContent>
+            {searchParams.has("passwordChanged") && <p className="mb-4 text-sm" role="status">Password changed. Sign in again with your new password.</p>}
             {oidcFailed && (
               <div className="mb-4 flex items-start gap-2 rounded-md border border-border bg-muted p-3 text-sm text-muted-foreground">
                 <CircleAlert

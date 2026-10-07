@@ -3,7 +3,7 @@
 import { hash } from "@node-rs/argon2";
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../config";
-import { createSqliteStore } from "../db/store.sqlite";
+import { createTestStore as createSqliteStore } from "../test/store";
 import type { Role, Store } from "../db/store";
 import { createApp } from "./app";
 
@@ -54,7 +54,7 @@ describe("GET /api/v1/health", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.status).toBe("ok");
-    expect(body.db).toBe("sqlite");
+    expect(body.db).toBe(process.env.HATCHECK_TEST_DB === "postgres" ? "postgres" : "sqlite");
     expect(body.oidcEnabled).toBe(false);
     expect(body.aiEnabled).toBe(false);
     expect(typeof body.version).toBe("string");

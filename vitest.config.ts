@@ -4,7 +4,11 @@ export default defineConfig({
   test: {
     include: ["src/**/*.test.ts"],
     environment: "node",
-    // PG integration tests self-skip when HATCHECK_TEST_PG_URL is not set;
-    // CI sets it in the postgres matrix leg.
+    globalSetup: ["./src/test/global-setup.ts"],
+    testTimeout: 30_000,
+    hookTimeout: 60_000,
+    maxWorkers: 4,
+    // Application fixtures use the selected database; PG store contracts
+    // also run when HATCHECK_TEST_PG_URL is supplied.
   },
 });

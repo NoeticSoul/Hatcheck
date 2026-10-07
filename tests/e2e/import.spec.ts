@@ -37,7 +37,10 @@ test("dry run previews without creating, commit imports the file", async ({
   // Commit: the same file now creates both assets.
   await navTo(page, "Import");
   await page.getByLabel("CSV content").fill(CSV);
+  await page.getByRole("button", { name: /preview \(dry run\)/i }).click();
+  await expect(page.getByText("Dry-run preview")).toBeVisible();
   await page.getByRole("button", { name: /commit import/i }).click();
+  await expect(page.getByText("Import result", { exact: true })).toBeVisible();
   await expect(page.getByText("Import result")).toBeVisible();
   await expect(
     page
@@ -64,7 +67,10 @@ test("identity collision becomes an exception a human resolves", async ({
     .fill(
       `name,serial_number,asset_tag\nE2I Owner ${RUN},${serial},HT-E2I-C1-${RUN}\n`,
     );
+  await page.getByRole("button", { name: /preview \(dry run\)/i }).click();
+  await expect(page.getByText("Dry-run preview")).toBeVisible();
   await page.getByRole("button", { name: /commit import/i }).click();
+  await expect(page.getByText("Import result", { exact: true })).toBeVisible();
   await expect(
     page
       .getByTestId("import-result")
@@ -77,7 +83,10 @@ test("identity collision becomes an exception a human resolves", async ({
     .fill(
       `name,serial_number,asset_tag\nE2I Intruder ${RUN},${serial},HT-E2I-C9-${RUN}\n`,
     );
+  await page.getByRole("button", { name: /preview \(dry run\)/i }).click();
+  await expect(page.getByText("Dry-run preview")).toBeVisible();
   await page.getByRole("button", { name: /commit import/i }).click();
+  await expect(page.getByText("Import result", { exact: true })).toBeVisible();
   await expect(
     page
       .getByTestId("import-result")

@@ -1,0 +1,12 @@
+# Copy to terraform.tfvars locally. No passwords or AWS access keys belong here.
+# These names and addresses are documentation examples; replace all placeholders.
+aws_region            = "us-east-1"
+domain_name           = "hatcheck.example.test"
+certificate_arn       = "arn:aws:acm:us-east-1:123456789012:certificate/REPLACE-ME"
+initial_admin_email   = "admin@example.test"
+allowed_ingress_cidrs = ["203.0.113.0/24"] # Replace with your office/VPN egress.
+# route53_zone_id      = "REPLACE-ME"     # Omit for an external DNS provider.
+image_tag             = "REPLACE-WITH-REVIEWED-COMMIT"
+service_enabled       = false             # Remains false until migration succeeds.
+db_multi_az           = false             # Enable after reviewing cost/availability.
+nat_gateway_per_az    = false             # Enable for independent AZ egress.

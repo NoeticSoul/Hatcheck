@@ -1,0 +1,12 @@
+# Optional encrypted remote state. Copy to backend.tf after creating/reviewing
+# a private, versioned S3 state bucket with public access blocked.
+# Values here are examples; never put AWS access keys in a backend file.
+terraform {
+  backend "s3" {
+    bucket       = "REPLACE-WITH-PRIVATE-STATE-BUCKET"
+    key          = "hatcheck/pilot/terraform.tfstate"
+    region       = "REPLACE-WITH-STATE-BUCKET-REGION"
+    encrypt      = true
+    use_lockfile = true
+  }
+}

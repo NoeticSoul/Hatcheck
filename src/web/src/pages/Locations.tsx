@@ -58,7 +58,7 @@ export function LocationsPage() {
   const writer = canWrite(user);
   // Full map for paths and parent pickers; the table itself pages
   // server-side below.
-  const { locations: allLocations, byId, reload: reloadAll } = useLocations();
+  const { locations: allLocations, byId, reload: reloadAll, loading: locationsLoading, error: locationsError } = useLocations();
 
   const [items, setItems] = useState<ApiLocation[] | null>(null);
   const [total, setTotal] = useState(0);
@@ -75,6 +75,7 @@ export function LocationsPage() {
   useEffect(() => {
     let cancelled = false;
     setError(null);
+    setItems(null);
     api
       .listLocations({ limit: PAGE_SIZE, offset, includeInactive: true })
       .then((page) => {
@@ -126,6 +127,7 @@ export function LocationsPage() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (busy) return;
     setBusy(true);
     setFormError(null);
     try {
@@ -202,7 +204,7 @@ export function LocationsPage() {
       </div>
 
       {error !== null && (
-        <p className="mt-4 text-sm text-destructive">{error}</p>
+        <div role="alert" className="mt-4 flex flex-wrap items-center gap-2"><p className="text-sm text-destructive">{error}</p><Button variant="outline" size="sm" onClick={refresh}>Retry locations</Button></div>
       )}
 
       <div className="mt-6 rounded-xl border border-border bg-card px-4">
@@ -223,7 +225,7 @@ export function LocationsPage() {
                   colSpan={writer ? 5 : 4}
                   className="text-muted-foreground"
                 >
-                  Loading...
+                  {error ? "Locations unavailable." : "Loading..."}
                 </TableCell>
               </TableRow>
             ) : items.length === 0 ? (
@@ -290,10 +292,11 @@ export function LocationsPage() {
 
       <Dialog
         open={dialog !== "none"}
-        onClose={() => setDialog("none")}
+        onClose={() => { if (!busy) setDialog("none"); }}
         title={dialog === "create" ? "New location" : "Edit location"}
       >
         <form onSubmit={submit} className="space-y-4">
+          {locationsError && <div role="alert"><p className="text-sm text-destructive">{locationsError}</p><Button type="button" variant="outline" size="sm" onClick={reloadAll}>Retry location hierarchy</Button></div>}
           <div>
             <Label htmlFor="location-name">Name</Label>
             <Input
@@ -344,7 +347,7 @@ export function LocationsPage() {
                 onChange={(e) =>
                   setForm({ ...form, parentId: e.target.value })
                 }
-                disabled={form.kind === "site"}
+                disabled={form.kind === "site" || locationsLoading || locationsError !== null}
                 className="mt-1.5"
               >
                 <option value="">
@@ -393,6 +396,7 @@ export function LocationsPage() {
             <Button
               type="button"
               variant="outline"
+              disabled={busy}
               onClick={() => setDialog("none")}
             >
               Cancel

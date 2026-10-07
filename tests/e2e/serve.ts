@@ -17,6 +17,8 @@ const env: NodeJS.ProcessEnv = {
   APP_URL: `http://localhost:${port}`,
   HATCHECK_DB: "sqlite",
   HATCHECK_SQLITE_PATH: join(dataDir, "e2e.db"),
+  HATCHECK_TRUST_PROXY: "true",
+  HATCHECK_TRUSTED_PROXIES: "127.0.0.1,::1",
   // Synthetic e2e-only credential, mirrored in login.spec.ts. Not a secret.
   HATCHECK_SEED_ADMIN_PASSWORD: "e2e-admin-password-0k",
 };

@@ -188,6 +188,7 @@ export const CustodyEventSchema = z
   .object({
     id: z.string(),
     assetId: z.string(),
+    sequence: z.number().int().min(1),
     at: z.number(),
     type: z.enum(["check_out", "check_in"]),
     holderUserId: z.string().nullable(),

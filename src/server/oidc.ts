@@ -1,17 +1,18 @@
-// OIDC login via openid-client v6 (functional API). Users are matched by
-// the token's `sub` claim; unknown subjects are auto-provisioned with the
-// least-privileged role. An email collision with an existing account is
-// treated as a failure, never an automatic merge (exception-first
-// correlation is a charter invariant for identities in general).
+// OIDC identities are scoped to their issuer and subject. New accounts
+// require explicit domain admission and a verified email; email collisions
+// never merge identities. Database failures propagate for atomic rollback.
 import type { Context } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import * as oidc from "openid-client";
 import type { AppConfig } from "../config";
-import { clientIp, errorBody, type AppEnv } from "./context";
+import type { Store } from "../db/store";
+import { z } from "zod";
+import { clientIp, errorBody, sanitizeUser, type AppEnv } from "./context";
 import { issueSession } from "./session";
 
 const STATE_COOKIE = "hatcheck_oidc_state";
 const VERIFIER_COOKIE = "hatcheck_oidc_verifier";
+const NONCE_COOKIE = "hatcheck_oidc_nonce";
 // Both the /login and /callback routes live under this path.
 const COOKIE_PATH = "/api/v1/auth/oidc";
 const COOKIE_TTL_SECONDS = 600;
@@ -59,12 +60,13 @@ export function createOidcHandlers(config: AppConfig): OidcHandlers {
   function clearFlowCookies(c: Context<AppEnv>): void {
     deleteCookie(c, STATE_COOKIE, { path: COOKIE_PATH });
     deleteCookie(c, VERIFIER_COOKIE, { path: COOKIE_PATH });
+    deleteCookie(c, NONCE_COOKIE, { path: COOKIE_PATH });
   }
 
-  async function fail(c: Context<AppEnv>, reason: string): Promise<Response> {
+  async function fail(c: Context<AppEnv>, reason: string, auditStore = c.get("store")): Promise<Response> {
     clearFlowCookies(c);
     try {
-      await c.get("store").appendAudit({
+      await auditStore.appendAudit({
         action: "auth.oidc_login_failed",
         details: { reason },
         ip: clientIp(c),
@@ -83,14 +85,17 @@ export function createOidcHandlers(config: AppConfig): OidcHandlers {
       try {
         const oidcConfig = await getOidcConfig();
         const state = oidc.randomState();
+        const nonce = oidc.randomNonce();
         const verifier = oidc.randomPKCECodeVerifier();
         const challenge = await oidc.calculatePKCECodeChallenge(verifier);
         setCookie(c, STATE_COOKIE, state, shortLivedCookieOptions());
         setCookie(c, VERIFIER_COOKIE, verifier, shortLivedCookieOptions());
+        setCookie(c, NONCE_COOKIE, nonce, shortLivedCookieOptions());
         const url = oidc.buildAuthorizationUrl(oidcConfig, {
           redirect_uri: config.oidc.redirectUri ?? "",
           scope: "openid email profile",
           state,
+          nonce,
           code_challenge: challenge,
           code_challenge_method: "S256",
         });
@@ -107,79 +112,91 @@ export function createOidcHandlers(config: AppConfig): OidcHandlers {
       const store = c.get("store");
       const state = getCookie(c, STATE_COOKIE);
       const verifier = getCookie(c, VERIFIER_COOKIE);
-      if (state === undefined || verifier === undefined) {
+      const nonce = getCookie(c, NONCE_COOKIE);
+      if (state === undefined || verifier === undefined || nonce === undefined) {
         return fail(c, "missing_flow_cookies");
       }
+      let claims: ReturnType<oidc.TokenEndpointResponseHelpers["claims"]>;
       try {
         const oidcConfig = await getOidcConfig();
+        const callbackUrl = new URL(config.oidc.redirectUri ?? "");
+        callbackUrl.search = new URL(c.req.url).search;
         const tokens = await oidc.authorizationCodeGrant(
           oidcConfig,
-          new URL(c.req.url),
+          callbackUrl,
           {
             expectedState: state,
+            expectedNonce: nonce,
             pkceCodeVerifier: verifier,
             idTokenExpected: true,
           },
         );
-        const claims = tokens.claims();
-        if (claims === undefined) {
-          return fail(c, "missing_id_token");
-        }
-        const subject = claims.sub;
-        const email = typeof claims["email"] === "string" ? claims["email"] : null;
-        const name = typeof claims["name"] === "string" ? claims["name"] : null;
-
-        let user = await store.getUserByOidcSubject(subject);
-        if (user === null) {
-          if (email === null) {
-            return fail(c, "missing_email_claim");
-          }
-          const existing = await store.getUserByEmail(email);
-          if (existing !== null) {
-            // Same email, different identity source: never auto-merge.
-            return fail(c, "email_conflict");
-          }
-          user = await store.createUser({
-            email,
-            displayName: name ?? email,
-            role: "readonly",
-            authSource: "oidc",
-            oidcSubject: subject,
-          });
-          await store.appendAudit({
-            action: "user.create",
-            actorUserId: null,
-            actorEmail: null,
-            entityType: "user",
-            entityId: user.id,
-            details: { source: "oidc_auto_provision" },
-            ip: clientIp(c),
-          });
-        }
-
-        clearFlowCookies(c);
-
-        if (!user.isActive) {
-          await store.appendAudit({
-            action: "auth.oidc_login_failed",
-            actorUserId: user.id,
-            actorEmail: user.email,
-            details: { reason: "inactive_user" },
-            ip: clientIp(c),
-          });
-          return c.json(errorBody("account_inactive", "Account is inactive"), 403);
-        }
-
-        await store.appendAudit({
-          action: "auth.oidc_login",
-          actorUserId: user.id,
-          actorEmail: user.email,
-          ip: clientIp(c),
-        });
-        await issueSession(store, config, c, user);
-        return c.redirect("/", 302);
+        claims = tokens.claims();
       } catch {
         return fail(c, "code_exchange_failed");
+      }
+      if (claims === undefined) return fail(c, "missing_id_token");
+      const subject = claims.sub;
+      const issuer = claims.iss;
+      const emailClaim = z.email().safeParse(claims["email"]);
+      if (!emailClaim.success || claims["email_verified"] !== true) {
+        return fail(c, "verified_email_required");
+      }
+      const email = emailClaim.data.toLowerCase();
+      const name = typeof claims["name"] === "string" ? claims["name"] : null;
+      if (issuer !== config.oidc.issuer || !subject) {
+        return fail(c, "invalid_identity");
+      }
+      // No database lock is held while discovering the issuer or exchanging
+      // the authorization code. Once validated, provisioning/audit/session
+      // writes commit together and failures propagate for rollback.
+      try {
+        return await store.transaction(async (tx: Store) => {
+          let user = await tx.getUserByOidcSubject(subject, issuer);
+          if (user === null) {
+            if (!config.oidc.autoProvision ||
+                !config.oidc.allowedEmailDomains.includes(email.slice(email.lastIndexOf("@") + 1))) {
+              return fail(c, "admission_denied", tx);
+            }
+            const existing = await tx.getUserByEmail(email);
+            if (existing !== null) {
+              // Includes legacy issuer-less OIDC accounts: never silently bind them.
+              return fail(c, "email_conflict", tx);
+            }
+            user = await tx.createUser({
+              email,
+              displayName: name ?? email,
+              role: "readonly",
+              authSource: "oidc",
+              oidcSubject: subject,
+              oidcIssuer: issuer,
+            });
+            await tx.appendAudit({
+              action: "user.create",
+              actorUserId: null,
+              actorEmail: null,
+              entityType: "user",
+              entityId: user.id,
+              details: { source: "oidc_admitted", issuer, before: null, after: sanitizeUser(user) },
+              ip: clientIp(c),
+            });
+          }
+          clearFlowCookies(c);
+          if (!user.isActive) return fail(c, "inactive_user", tx);
+          await tx.appendAudit({
+            action: "auth.oidc_login",
+            actorUserId: user.id,
+            actorEmail: user.email,
+            ip: clientIp(c),
+          });
+          await issueSession(tx, config, c, user);
+          return c.redirect("/", 302);
+        });
+      } catch (error) {
+        // Header effects follow the same outcome as persistence, including
+        // failures after the callback completes but before COMMIT succeeds.
+        c.header("Set-Cookie", undefined);
+        throw error;
       }
     },
   };

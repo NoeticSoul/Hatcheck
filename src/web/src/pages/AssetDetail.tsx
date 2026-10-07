@@ -55,7 +55,7 @@ function FieldRow({ label, value }: { label: string; value: string | null }) {
   return (
     <div className="flex items-start justify-between gap-4 py-1.5 text-sm">
       <span className="shrink-0 text-muted-foreground">{label}</span>
-      <span className="whitespace-pre-wrap text-right font-medium">
+      <span className="min-w-0 break-words whitespace-pre-wrap text-right font-medium">
         {value === null || value === "" ? "—" : value}
       </span>
     </div>
@@ -66,13 +66,14 @@ export function AssetDetailPage() {
   const { id } = useParams<{ id: string }>();
   const user = useCurrentUser();
   const navigate = useNavigate();
-  const { locations, byId } = useLocations();
+  const { locations, byId, loading: locationsLoading, error: locationsError, reload: reloadLocations } = useLocations();
 
   const [detail, setDetail] = useState<AssetDetailResponse | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [history, setHistory] = useState<ApiCustodyEvent[] | null>(null);
   const [historyTotal, setHistoryTotal] = useState(0);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyOffset, setHistoryOffset] = useState(0);
   const [nonce, setNonce] = useState(0);
 
@@ -115,6 +116,8 @@ export function AssetDetailPage() {
   useEffect(() => {
     if (id === undefined) return;
     let cancelled = false;
+    setHistoryError(null);
+    setHistory(null);
     api
       .listCustody(id, HISTORY_PAGE, historyOffset)
       .then((page) => {
@@ -122,7 +125,7 @@ export function AssetDetailPage() {
         setHistory(page.items);
         setHistoryTotal(page.total);
       })
-      .catch(() => {});
+      .catch(() => { if (!cancelled) setHistoryError("Could not load custody history."); });
     return () => {
       cancelled = true;
     };
@@ -174,8 +177,8 @@ export function AssetDetailPage() {
       </Link>
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold tracking-tight">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
+          <h1 className="min-w-0 break-words text-xl font-semibold tracking-tight">
             {asset.name}
           </h1>
           <span data-testid="asset-status">
@@ -190,6 +193,9 @@ export function AssetDetailPage() {
             currentHolder={currentCustody?.holderName ?? null}
             locations={locations}
             byId={byId}
+            locationsUnavailable={locationsLoading || locationsError !== null}
+            locationsError={locationsError}
+            reloadLocations={reloadLocations}
             asset={asset}
             onChanged={reload}
           />
@@ -274,7 +280,7 @@ export function AssetDetailPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {history === null ? (
+            {historyError ? <div role="alert"><p className="text-sm text-destructive">{historyError}</p><Button variant="outline" size="sm" className="mt-2" onClick={reload}>Retry history</Button></div> : history === null ? (
               <p className="text-sm text-muted-foreground">Loading...</p>
             ) : history.length === 0 ? (
               <p className="text-sm text-muted-foreground">
@@ -470,6 +476,9 @@ function AssetActions({
   currentHolder,
   locations,
   byId,
+  locationsUnavailable,
+  locationsError,
+  reloadLocations,
   asset,
   onChanged,
 }: {
@@ -479,6 +488,9 @@ function AssetActions({
   currentHolder: string | null;
   locations: ReturnType<typeof useLocations>["locations"];
   byId: ReturnType<typeof useLocations>["byId"];
+  locationsUnavailable: boolean;
+  locationsError: string | null;
+  reloadLocations: () => void;
   asset: AssetDetailResponse["asset"];
   onChanged: () => void;
 }) {
@@ -492,6 +504,9 @@ function AssetActions({
   // Check-out form
   const [holderMode, setHolderMode] = useState<"user" | "label">("user");
   const [users, setUsers] = useState<UserOption[]>([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [usersError, setUsersError] = useState<string | null>(null);
+  const [usersNonce, setUsersNonce] = useState(0);
   const [holderUserId, setHolderUserId] = useState("");
   const [holderLabel, setHolderLabel] = useState("");
   const [moveLocationId, setMoveLocationId] = useState("");
@@ -513,11 +528,15 @@ function AssetActions({
 
   useEffect(() => {
     if (dialog !== "checkout") return;
+    let cancelled = false;
+    setUsersLoading(true); setUsersError(null);
     api
       .listUserOptions()
-      .then((res) => setUsers(res.items))
-      .catch(() => {});
-  }, [dialog]);
+      .then((res) => { if (!cancelled) setUsers(res.items); })
+      .catch(() => { if (!cancelled) setUsersError("Could not load registered users."); })
+      .finally(() => { if (!cancelled) setUsersLoading(false); });
+    return () => { cancelled = true; };
+  }, [dialog, usersNonce]);
 
   function openDialog(next: typeof dialog) {
     setError(null);
@@ -553,6 +572,7 @@ function AssetActions({
 
   async function submitCheckout(event: FormEvent) {
     event.preventDefault();
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -574,6 +594,7 @@ function AssetActions({
 
   async function submitCheckin(event: FormEvent) {
     event.preventDefault();
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -592,6 +613,7 @@ function AssetActions({
 
   async function submitEdit(event: FormEvent) {
     event.preventDefault();
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -618,6 +640,7 @@ function AssetActions({
   }
 
   async function submitDelete() {
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -634,6 +657,7 @@ function AssetActions({
       <Label htmlFor="custody-location">Move to location (optional)</Label>
       <Select
         id="custody-location"
+        disabled={locationsUnavailable || busy}
         value={moveLocationId}
         onChange={(e) => setMoveLocationId(e.target.value)}
         className="mt-1.5"
@@ -647,6 +671,7 @@ function AssetActions({
             </option>
           ))}
       </Select>
+      {locationsError && <div role="alert" className="mt-2"><p className="text-sm text-destructive">{locationsError}</p><Button type="button" variant="outline" size="sm" onClick={reloadLocations}>Retry locations</Button></div>}
     </div>
   );
 
@@ -691,7 +716,7 @@ function AssetActions({
 
       <Dialog
         open={dialog === "checkout"}
-        onClose={() => setDialog("none")}
+        onClose={() => { if (!busy) setDialog("none"); }}
         title="Check out"
         description="Creates a custody event and sets the asset to deployed."
       >
@@ -715,6 +740,7 @@ function AssetActions({
               <Label htmlFor="holder-user">User</Label>
               <Select
                 id="holder-user"
+                disabled={usersLoading || usersError !== null || busy}
                 value={holderUserId}
                 onChange={(e) => setHolderUserId(e.target.value)}
                 required
@@ -729,6 +755,8 @@ function AssetActions({
                   </option>
                 ))}
               </Select>
+              {usersLoading && <p className="mt-2 text-xs text-muted-foreground">Loading users...</p>}
+              {usersError && <div role="alert" className="mt-2"><p className="text-sm text-destructive">{usersError}</p><Button type="button" variant="outline" size="sm" onClick={() => setUsersNonce((n) => n + 1)}>Retry users</Button></div>}
             </div>
           ) : (
             <div>
@@ -746,12 +774,13 @@ function AssetActions({
           {locationField}
           {noteField}
           {error !== null && (
-            <p className="text-sm text-destructive">{error}</p>
+            <p role="alert" className="text-sm text-destructive">{error}</p>
           )}
           <div className="flex justify-end gap-2">
             <Button
               type="button"
               variant="outline"
+              disabled={busy}
               onClick={() => setDialog("none")}
             >
               Cancel
@@ -761,7 +790,7 @@ function AssetActions({
               disabled={
                 busy ||
                 (holderMode === "user"
-                  ? holderUserId === ""
+                  ? holderUserId === "" || usersLoading || usersError !== null
                   : holderLabel.trim() === "")
               }
             >
@@ -773,7 +802,7 @@ function AssetActions({
 
       <Dialog
         open={dialog === "checkin"}
-        onClose={() => setDialog("none")}
+        onClose={() => { if (!busy) setDialog("none"); }}
         title="Check in"
         description={`Returns the asset to stock${
           currentHolder === null ? "" : ` from ${currentHolder}`
@@ -783,12 +812,13 @@ function AssetActions({
           {locationField}
           {noteField}
           {error !== null && (
-            <p className="text-sm text-destructive">{error}</p>
+            <p role="alert" className="text-sm text-destructive">{error}</p>
           )}
           <div className="flex justify-end gap-2">
             <Button
               type="button"
               variant="outline"
+              disabled={busy}
               onClick={() => setDialog("none")}
             >
               Cancel
@@ -802,7 +832,7 @@ function AssetActions({
 
       <Dialog
         open={dialog === "edit"}
-        onClose={() => setDialog("none")}
+        onClose={() => { if (!busy) setDialog("none"); }}
         title="Edit asset"
         className="max-w-2xl"
       >
@@ -813,6 +843,7 @@ function AssetActions({
             locations={locations}
             byId={byId}
             statusEditable={status !== "deployed"}
+            locationsUnavailable={locationsUnavailable}
           />
           {error !== null && (
             <p className="mt-3 text-sm text-destructive">{error}</p>
@@ -821,6 +852,7 @@ function AssetActions({
             <Button
               type="button"
               variant="outline"
+              disabled={busy}
               onClick={() => setDialog("none")}
             >
               Cancel
@@ -837,7 +869,7 @@ function AssetActions({
 
       <Dialog
         open={dialog === "delete"}
-        onClose={() => setDialog("none")}
+        onClose={() => { if (!busy) setDialog("none"); }}
         title="Delete asset"
         description="Hard delete: interfaces and custody history go with it. The audit log keeps the final snapshot. Prefer retiring assets instead."
       >
@@ -845,7 +877,7 @@ function AssetActions({
           <p className="mb-3 text-sm text-destructive">{error}</p>
         )}
         <div className="flex justify-end gap-2">
-          <Button variant="outline" onClick={() => setDialog("none")}>
+          <Button variant="outline" disabled={busy} onClick={() => setDialog("none")}>
             Cancel
           </Button>
           <Button

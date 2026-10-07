@@ -1,7 +1,8 @@
-import { createRoute } from "@hono/zod-openapi";
+import { createRoute, z } from "@hono/zod-openapi";
 import type { UserPatch, UserRecord } from "../../db/store";
 import { clientIp, createRouter, errorBody, sanitizeUser } from "../context";
-import { hashPassword } from "../password";
+import { hashPassword, verifyPassword } from "../password";
+import { clearSession } from "../session";
 import { requireAuth, requireRole } from "../middleware/auth";
 import {
   cookieSecurity,
@@ -83,6 +84,30 @@ const createUserRoute = createRoute({
   },
 });
 
+const changePasswordRoute = createRoute({
+  method: "post",
+  path: "/api/v1/users/me/password",
+  tags: ["users"],
+  summary: "Change your local password and revoke every session",
+  security: cookieSecurity,
+  middleware: [requireAuth],
+  request: {
+    body: {
+      content: { "application/json": { schema: z.object({
+        currentPassword: z.string().min(1).max(1024),
+        newPassword: z.string().min(12).max(1024),
+      }).strict() } },
+      required: true,
+    },
+  },
+  responses: {
+    200: jsonContent(z.object({ ok: z.literal(true) }), "Password changed; sign in again"),
+    400: jsonContent(ErrorSchema, "Validation error"),
+    401: jsonContent(ErrorSchema, "Not authenticated"),
+    403: jsonContent(ErrorSchema, "Current password incorrect or account uses an identity provider"),
+  },
+});
+
 const patchUserRoute = createRoute({
   method: "patch",
   path: "/api/v1/users/{id}",
@@ -137,13 +162,13 @@ export function userRoutes() {
       return c.json(errorBody("email_in_use", "Email is already in use"), 409);
     }
 
-    const created = await store.createUser({
+    const created = await store.transaction(async (tx) => tx.createUser({
       email: body.email,
       displayName: body.displayName,
       role: body.role,
       authSource: "local",
       passwordHash: await hashPassword(body.password),
-    });
+    }));
     await store.appendAudit({
       action: "user.create",
       actorUserId: actor.id,
@@ -154,6 +179,34 @@ export function userRoutes() {
       ip: clientIp(c),
     });
     return c.json({ user: sanitizeUser(created) }, 201);
+  });
+
+  router.openapi(changePasswordRoute, async (c) => {
+    const body = c.req.valid("json");
+    const store = c.get("store");
+    const actor = c.get("user");
+    // Read the current credential under the request transaction. The
+    // authenticated snapshot may predate a concurrent reset.
+    const target = await store.getUserById(actor.id);
+    if (target === null || target.authSource !== "local" || target.passwordHash === null) {
+      return c.json(errorBody("external_password", "Change this account's password with its identity provider"), 403);
+    }
+    if (!await verifyPassword(target.passwordHash, body.currentPassword)) {
+      return c.json(errorBody("invalid_current_password", "Current password is incorrect"), 403);
+    }
+    await store.updateUser(target.id, { passwordHash: await hashPassword(body.newPassword) });
+    await store.deleteSessionsForUser(target.id);
+    await store.appendAudit({
+      action: "user.password_change",
+      actorUserId: actor.id,
+      actorEmail: actor.email,
+      entityType: "user",
+      entityId: target.id,
+      details: { fields: ["password"], sessionsRevoked: true },
+      ip: clientIp(c),
+    });
+    await clearSession(store, c, null);
+    return c.json({ ok: true as const }, 200);
   });
 
   router.openapi(patchUserRoute, async (c) => {

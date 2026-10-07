@@ -67,6 +67,7 @@ const oidcLoginRoute = createRoute({
   responses: {
     302: { description: "Redirect to the identity provider" },
     501: jsonContent(ErrorSchema, "OIDC is not configured"),
+    429: jsonContent(ErrorSchema, "Too many attempts"),
   },
 });
 
@@ -79,6 +80,7 @@ const oidcCallbackRoute = createRoute({
     302: { description: "Redirect to the app (or /login?error=oidc on failure)" },
     403: jsonContent(ErrorSchema, "Account is inactive"),
     501: jsonContent(ErrorSchema, "OIDC is not configured"),
+    429: jsonContent(ErrorSchema, "Too many attempts"),
   },
 });
 
@@ -99,6 +101,7 @@ export function authRoutes(config: AppConfig) {
     loginRoute.getRoutingPath(),
     rateLimit({ windowMs: 60_000, max: 10 }),
   );
+  router.use("/api/v1/auth/oidc/*", rateLimit({ windowMs: 60_000, max: 20 }));
 
   router.openapi(loginRoute, async (c) => {
     const { email, password } = c.req.valid("json");
@@ -142,13 +145,16 @@ export function authRoutes(config: AppConfig) {
     const store = c.get("store");
     const user = c.get("user");
     const session = c.get("session");
-    await clearSession(store, c, session.tokenHash);
+    await store.deleteSession(session.tokenHash);
     await store.appendAudit({
       action: "auth.logout",
       actorUserId: user.id,
       actorEmail: user.email,
       ip: clientIp(c),
     });
+    // Emit the expired cookie only once revocation and its audit have worked.
+    // An audit failure rolls back deletion and leaves the browser able to retry.
+    await clearSession(store, c, null);
     return c.body(null, 204);
   });
 

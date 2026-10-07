@@ -20,11 +20,13 @@ export const users = sqliteTable(
     role: text("role", { enum: ["admin", "technician", "readonly"] }).notNull(),
     authSource: text("auth_source", { enum: ["local", "oidc"] }).notNull(),
     passwordHash: text("password_hash"),
-    oidcSubject: text("oidc_subject").unique(),
+    oidcSubject: text("oidc_subject"),
+    oidcIssuer: text("oidc_issuer"),
     isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
+  (t) => [uniqueIndex("users_oidc_identity_uq").on(t.oidcIssuer, t.oidcSubject)],
 );
 
 export const sessions = sqliteTable(
@@ -178,6 +180,7 @@ export const custodyEvents = sqliteTable(
     assetId: text("asset_id")
       .notNull()
       .references(() => assets.id, { onDelete: "cascade" }),
+    sequence: integer("sequence").notNull(),
     at: integer("at").notNull(),
     type: text("type", { enum: ["check_out", "check_in"] }).notNull(),
     holderUserId: text("holder_user_id"),
@@ -188,7 +191,10 @@ export const custodyEvents = sqliteTable(
     actorUserId: text("actor_user_id"),
     actorEmail: text("actor_email"),
   },
-  (t) => [index("custody_events_asset_at_idx").on(t.assetId, t.at)],
+  (t) => [
+    index("custody_events_asset_at_idx").on(t.assetId, t.at),
+    uniqueIndex("custody_events_asset_sequence_uq").on(t.assetId, t.sequence),
+  ],
 );
 
 export const importJobs = sqliteTable(
@@ -255,3 +261,11 @@ export const exceptionRecords = sqliteTable(
     index("exception_records_at_idx").on(t.at),
   ],
 );
+
+// Every application mutation transaction locks this row before prechecks.
+export const mutationLocks = sqliteTable("mutation_locks", {
+  key: text("key").primaryKey(),
+  value: integer("value").notNull().default(0),
+});
+
+export * from "./schema.documents.sqlite";

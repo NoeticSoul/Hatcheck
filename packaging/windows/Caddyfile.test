@@ -1,0 +1,15 @@
+# Local-only Windows MSI review. Run from the repository/source-package root.
+{
+    admin 127.0.0.1:2029
+    auto_https disable_redirects
+    persist_config off
+    storage file_system {
+        root ./data/msi-https
+    }
+}
+
+https://hatcheck.test {
+    bind 127.0.0.1
+    tls internal
+    reverse_proxy 127.0.0.1:3000
+}

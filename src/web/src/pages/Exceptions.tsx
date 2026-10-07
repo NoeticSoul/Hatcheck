@@ -30,6 +30,8 @@ import {
 const PAGE_SIZE = 25;
 
 interface ParsedDetails {
+  jobId?: string;
+  rowNumber?: number;
   reason?: string;
   identity?: {
     assetTag: string | null;
@@ -83,6 +85,7 @@ export function ExceptionsPage() {
     if (!writer) return;
     let cancelled = false;
     setError(null);
+    setItems(null);
     api
       .listExceptions({
         limit: PAGE_SIZE,
@@ -126,7 +129,7 @@ export function ExceptionsPage() {
 
   async function submitDecision(event: FormEvent) {
     event.preventDefault();
-    if (reviewing === null) return;
+    if (reviewing === null || busy) return;
     setBusy(true);
     setDialogError(null);
     try {
@@ -171,7 +174,7 @@ export function ExceptionsPage() {
       </div>
 
       {error !== null && (
-        <p className="mt-4 text-sm text-destructive">{error}</p>
+        <div role="alert" className="mt-4 flex flex-wrap items-center gap-2"><p className="text-sm text-destructive">{error}</p><Button variant="outline" size="sm" onClick={() => setNonce((n) => n + 1)}>Retry exceptions</Button></div>
       )}
 
       <div className="mt-6 rounded-xl border border-border bg-card px-4">
@@ -194,7 +197,7 @@ export function ExceptionsPage() {
                   colSpan={writer ? 7 : 6}
                   className="text-muted-foreground"
                 >
-                  Loading...
+                  {error ? "Exceptions unavailable." : "Loading..."}
                 </TableCell>
               </TableRow>
             ) : items.length === 0 ? (
@@ -285,7 +288,7 @@ export function ExceptionsPage() {
 
       <Dialog
         open={reviewing !== null}
-        onClose={() => setReviewing(null)}
+        onClose={() => { if (!busy) setReviewing(null); }}
         title="Review exception"
         description="Decisions are final. Resolving changes nothing else — any asset edits you decide on are separate, audited actions."
       >
@@ -322,12 +325,13 @@ export function ExceptionsPage() {
               />
             </div>
             {dialogError !== null && (
-              <p className="text-sm text-destructive">{dialogError}</p>
+              <p role="alert" className="text-sm text-destructive">{dialogError}</p>
             )}
             <div className="flex justify-end gap-2">
               <Button
                 type="button"
                 variant="outline"
+                disabled={busy}
                 onClick={() => setReviewing(null)}
               >
                 Cancel
@@ -358,13 +362,14 @@ function ExceptionSummary({ exception }: { exception: ApiException }) {
                 {match.field}
               </code>{" "}
               = {match.value} already belongs to{" "}
-              <span className="font-medium text-foreground">
+              <Link to={`/assets/${match.assetId}`} className="font-medium text-foreground underline underline-offset-4">
                 {match.assetName}
-              </span>
+              </Link>
             </li>
           ))}
         </ul>
       )}
+      {details.jobId && <Link to={`/import/${details.jobId}${details.rowNumber ? `?row=${details.rowNumber}` : ""}`} className="mt-3 block text-xs underline">Inspect original import{details.rowNumber ? ` row ${details.rowNumber}` : ""}</Link>}
     </div>
   );
 }

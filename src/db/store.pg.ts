@@ -15,9 +15,12 @@ import {
   type Column,
   type SQL,
 } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/postgres-js";
+import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
+import type { ConnectionOptions } from "node:tls";
+import { createPgDocuments } from "./documents.pg";
+import { ConnectionGate } from "./connection-gate";
 import { timeOrderedId } from "./id";
 import * as schema from "./schema.pg";
 import {
@@ -70,7 +73,7 @@ const MIGRATIONS_DIR = fileURLToPath(
 /**
  * Portable ASCII-case-insensitive substring match: lower(column) LIKE
  * with the caller text backslash-escaped so % _ \ are literal. Never
- * ILIKE (PG-only) and never COLLATE (engine-specific).
+ * ILIKE is unnecessary; ordering uses an explicit byte collation below.
  */
 function ciContains(column: Column, text: string): SQL {
   // The pattern must be lowercased in JS to match lower(column): SQLite's
@@ -80,18 +83,6 @@ function ciContains(column: Column, text: string): SQL {
   const pattern =
     "%" + text.toLowerCase().replace(/[\\%_]/g, (ch) => "\\" + ch) + "%";
   return sql`lower(${column}) like ${pattern} escape '\\'`;
-}
-
-function byName<T extends { name: string; id: string }>(
-  a: T,
-  b: T,
-): number {
-  // Normalize in JS: SQLite orders by bytes, PostgreSQL by locale
-  // collation; both stores re-sort so the engines agree exactly. The id
-  // tie-breaker makes the order total, so equal names cannot reshuffle
-  // between paginated queries.
-  if (a.name !== b.name) return a.name < b.name ? -1 : 1;
-  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
 
 function buildLocationRow(location: NewLocation): LocationRecord {
@@ -143,10 +134,11 @@ function buildInterfaceRow(
   };
 }
 
-function buildCustodyRow(event: NewCustodyEvent): CustodyEventRecord {
+function buildCustodyRow(event: NewCustodyEvent, sequence: number): CustodyEventRecord {
   return {
     id: timeOrderedId(),
     assetId: event.assetId,
+    sequence,
     at: Date.now(),
     type: event.type,
     holderUserId: event.holderUserId ?? null,
@@ -266,46 +258,84 @@ function assetConditions(
 
 /**
  * Correlated subquery selecting only each asset's latest custody event by
- * (at desc, id desc): portable across both engines, no window functions.
+ * highest per-asset sequence: portable across both engines.
  */
 function isLatestCustodyEvent(): SQL {
-  return sql`${schema.custodyEvents.id} = (select ce2.id from custody_events ce2 where ce2.asset_id = ${schema.custodyEvents.assetId} order by ce2.at desc, ce2.id desc limit 1)`;
+  return sql`${schema.custodyEvents.id} = (select ce2.id from custody_events ce2 where ce2.asset_id = ${schema.custodyEvents.assetId} order by ce2.sequence desc limit 1)`;
 }
 
 /**
- * Matches assets whose CURRENT custody event — the latest by (at desc,
- * id desc) — is a check_out held by the given user. Same portable
+ * Matches assets whose CURRENT custody event (highest sequence) is a
+ * check_out held by the given user. Same portable
  * correlated-subquery style as isLatestCustodyEvent; past holders and
  * checked-in assets never match.
  */
 function currentlyHeldBy(userId: string): SQL {
-  return sql`exists (select 1 from custody_events ce where ce.asset_id = ${schema.assets.id} and ce.type = 'check_out' and ce.holder_user_id = ${userId} and ce.id = (select ce2.id from custody_events ce2 where ce2.asset_id = ${schema.assets.id} order by ce2.at desc, ce2.id desc limit 1))`;
+  return sql`exists (select 1 from custody_events ce where ce.asset_id = ${schema.assets.id} and ce.type = 'check_out' and ce.holder_user_id = ${userId} and ce.id = (select ce2.id from custody_events ce2 where ce2.asset_id = ${schema.assets.id} order by ce2.sequence desc limit 1))`;
 }
 
-export function createPgStore(databaseUrl: string): Store {
-  const client = postgres(databaseUrl, { max: 10 });
+export function createPgStore(databaseUrl: string, transport: { ssl?: ConnectionOptions } = {}): Store {
+  const client = postgres(databaseUrl, { ...transport, max: 10 });
   const db = drizzle(client, { schema });
-
-  return {
-    kind: "postgres",
-
+  return buildPgStore(db, {
     async migrate() {
-      // The migrator needs its own single connection.
-      const migrationClient = postgres(databaseUrl, { max: 1 });
+      const migrationClient = postgres(databaseUrl, { ...transport, max: 1 });
       try {
         await migrate(drizzle(migrationClient), {
-          // Env override read at migrate() time; see sqliteMigrationsFolder.
-          migrationsFolder:
-            process.env.HATCHECK_PG_MIGRATIONS_DIR ?? MIGRATIONS_DIR,
+          migrationsFolder: process.env.HATCHECK_PG_MIGRATIONS_DIR ?? MIGRATIONS_DIR,
         });
       } finally {
         await migrationClient.end();
       }
     },
+    close: () => client.end({ timeout: 5 }),
+  });
+}
 
-    async close() {
-      await client.end();
+function buildPgStore(
+  db: PostgresJsDatabase<typeof schema>,
+  lifecycle: { migrate(): Promise<void>; close(): Promise<void> },
+  context?: { active: boolean },
+  gate = new ConnectionGate(),
+): Store {
+  async function withTransaction<T>(
+    work: (connection: PostgresJsDatabase<typeof schema>) => Promise<T>,
+  ): Promise<T> {
+    return gate.run(async () => {
+      if (context && !context.active) throw new Error("Transaction store is no longer active");
+      return db.transaction(async (tx) => {
+        if (!context) {
+          // A portable no-op UPDATE obtains a transaction-duration lock.
+          // Take it before application prechecks, so two server processes
+          // cannot both pass last-admin, hierarchy, or identity invariants.
+          const locked = await tx.update(schema.mutationLocks)
+            .set({ value: 0 }).where(eq(schema.mutationLocks.key, "application"))
+            .returning({ key: schema.mutationLocks.key });
+          if (locked.length !== 1) throw new Error("Application mutation lock is missing; run migrations");
+        }
+        return work(tx);
+      });
+    });
+  }
+
+  const store: Store = {
+    ...createPgDocuments(db),
+    kind: "postgres",
+
+    async transaction<T>(work: (tx: Store) => Promise<T>): Promise<T> {
+      return withTransaction(async (connection) => {
+        const child = { active: true };
+        try {
+          return await work(buildPgStore(connection, lifecycle, child));
+        } finally {
+          child.active = false;
+        }
+      });
     },
+
+    async readiness(): Promise<void> { await db.execute(sql`select 1`); },
+    async migrate() { await lifecycle.migrate(); },
+    async close() { await lifecycle.close(); },
 
     async createUser(user: NewUser): Promise<UserRecord> {
       const row = buildUserRow(user);
@@ -331,11 +361,14 @@ export function createPgStore(databaseUrl: string): Store {
       return rows[0] ?? null;
     },
 
-    async getUserByOidcSubject(subject: string): Promise<UserRecord | null> {
+    async getUserByOidcSubject(subject: string, issuer?: string): Promise<UserRecord | null> {
       const rows = await db
         .select()
         .from(schema.users)
-        .where(eq(schema.users.oidcSubject, subject))
+        .where(and(
+          eq(schema.users.oidcSubject, subject),
+          issuer === undefined ? isNull(schema.users.oidcIssuer) : eq(schema.users.oidcIssuer, issuer),
+        ))
         .limit(1);
       return rows[0] ?? null;
     },
@@ -344,12 +377,8 @@ export function createPgStore(databaseUrl: string): Store {
       const rows = await db
         .select()
         .from(schema.users)
-        .orderBy(asc(schema.users.email));
-      // Normalize in JS: SQLite orders by bytes, PostgreSQL by locale
-      // collation; both stores re-sort so the engines agree exactly.
-      return rows.sort((a, b) =>
-        a.email < b.email ? -1 : a.email > b.email ? 1 : 0,
-      );
+        .orderBy(asc(sql`${schema.users.email} collate "C"`));
+      return rows;
     },
 
     async updateUser(id: string, patch: UserPatch): Promise<UserRecord | null> {
@@ -487,10 +516,10 @@ export function createPgStore(databaseUrl: string): Store {
         .select()
         .from(schema.locations)
         .where(locationConditions(query))
-        .orderBy(asc(schema.locations.name), asc(schema.locations.id))
+        .orderBy(asc(sql`${schema.locations.name} collate "C"`), asc(schema.locations.id))
         .limit(query.limit)
         .offset(query.offset ?? 0);
-      return rows.sort(byName);
+      return rows;
     },
 
     async countLocations(
@@ -545,7 +574,7 @@ export function createPgStore(databaseUrl: string): Store {
       interfaces: NewAssetInterface[],
     ): Promise<AssetRecord> {
       const row = buildAssetRow(asset);
-      await db.transaction(async (tx) => {
+      await withTransaction(async (tx) => {
         await tx.insert(schema.assets).values(row);
         for (const iface of interfaces) {
           await tx
@@ -588,10 +617,10 @@ export function createPgStore(databaseUrl: string): Store {
         .select()
         .from(schema.assets)
         .where(assetConditions(query))
-        .orderBy(asc(schema.assets.name), asc(schema.assets.id))
+        .orderBy(asc(sql`${schema.assets.name} collate "C"`), asc(schema.assets.id))
         .limit(query.limit)
         .offset(query.offset ?? 0);
-      return rows.sort(byName);
+      return rows;
     },
 
     async countAssets(
@@ -711,7 +740,7 @@ export function createPgStore(databaseUrl: string): Store {
       // at READ COMMITTED two concurrent check-outs would otherwise both
       // read "no open check_out" and both insert. The lock serializes
       // appends per asset, matching SQLite's inherent serialization.
-      return db.transaction(
+      return withTransaction(
         async (tx): Promise<CustodyAppendResult | null> => {
           const assetRows = await tx
             .select({
@@ -739,8 +768,7 @@ export function createPgStore(databaseUrl: string): Store {
             .from(schema.custodyEvents)
             .where(eq(schema.custodyEvents.assetId, event.assetId))
             .orderBy(
-              desc(schema.custodyEvents.at),
-              desc(schema.custodyEvents.id),
+              desc(schema.custodyEvents.sequence),
             )
             .limit(1);
           const latest = latestRows[0];
@@ -753,7 +781,7 @@ export function createPgStore(databaseUrl: string): Store {
               return { ok: false, conflict: "not_checked_out" };
             }
           }
-          const row = buildCustodyRow(event);
+          const row = buildCustodyRow(event, (latest?.sequence ?? 0) + 1);
           await tx.insert(schema.custodyEvents).values(row);
           if (
             newAssetStatus !== undefined ||
@@ -797,9 +825,15 @@ export function createPgStore(databaseUrl: string): Store {
         .select()
         .from(schema.custodyEvents)
         .where(eq(schema.custodyEvents.assetId, assetId))
-        .orderBy(desc(schema.custodyEvents.at), desc(schema.custodyEvents.id))
+        .orderBy(desc(schema.custodyEvents.sequence))
         .limit(opts.limit)
         .offset(opts.offset ?? 0);
+    },
+
+    async listRecentCustodyEvents(limit: number): Promise<CustodyEventRecord[]> {
+      return db.select().from(schema.custodyEvents)
+        .orderBy(desc(schema.custodyEvents.at), desc(schema.custodyEvents.id))
+        .limit(limit);
     },
 
     async countCustodyEvents(assetId: string): Promise<number> {
@@ -817,7 +851,7 @@ export function createPgStore(databaseUrl: string): Store {
         .select()
         .from(schema.custodyEvents)
         .where(eq(schema.custodyEvents.assetId, assetId))
-        .orderBy(desc(schema.custodyEvents.at), desc(schema.custodyEvents.id))
+        .orderBy(desc(schema.custodyEvents.sequence))
         .limit(1);
       const latest = rows[0];
       return latest !== undefined && latest.type === "check_out"
@@ -1018,4 +1052,20 @@ export function createPgStore(databaseUrl: string): Store {
       return rows[0] ?? null;
     },
   };
+  return new Proxy(store, {
+    get(target, key, receiver) {
+      const value: unknown = Reflect.get(target, key, receiver);
+      if (typeof value !== "function") return value;
+      if (key === "transaction" || key === "createAssetWithInterfaces" || key === "appendCustodyEvent") {
+        return value.bind(target);
+      }
+      return (...args: unknown[]) => gate.run(async () => {
+        if (context && !context.active) throw new Error("Transaction store is no longer active");
+        if (context && (key === "migrate" || key === "close")) {
+          throw new Error("Transaction stores cannot migrate or close the connection");
+        }
+        return Reflect.apply(value, target, args);
+      });
+    },
+  });
 }

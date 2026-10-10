@@ -120,7 +120,7 @@ jobs:
       HATCHECK_SERVER_URL: ${{ inputs.server_url || vars.HATCHECK_SERVER_URL || 'https://hatcheck.example.test' }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 10.0.401
       - name: Build unsigned MSI and launcher
